@@ -3,27 +3,28 @@ use strict;
 
 #Plastome annotation 
 #USAGE: 1: Full sequence 2: species
-
+my %genome;
 my $plastome;
 open my $cp_file, "<", $ARGV[0];
+my $genome_sid;
 while(<$cp_file>){
 	chomp;
 	if(/>/){
-		next;
+		$genome_sid=substr($_,1);
 	}
 	else{
-		$plastome .= $_;
+		$genome{$genome_sid} .= $_;
 	}
 }
-
+for my $chro (keys %genome){
 #Identify ORFs in sequence in both directions
-my %forward_orfs = &orf_finder($plastome);
-my $rc_plastome = reverse($plastome);
+my %forward_orfs = &orf_finder($genome{$chrom});
+my $rc_plastome = reverse($genome{$chrom});
 $rc_plastome =~ tr/ATCGatcg/TAGCtagc/;
 my %reverse_orfs = &orf_finder($rc_plastome);
 
 
-my $pl_len = length($plastome);
+my $pl_len = length($genome{$chrom});
 
 #Combine ORFs into single forward-based coordinates
 for my $orfid (keys %reverse_orfs){
@@ -35,60 +36,18 @@ for my $orfid (keys %reverse_orfs){
 	$orfid = $orfid . "-r";
 	$forward_orfs{$orfid}= $nstart . "-" . $nend;
 }
-open my $testout, ">", "find_thebad.txt";
-for my $testval (sort {$a cmp $b} keys %forward_orfs){
-		print $testout "$testval\t$forward_orfs{$testval}\n";
-
-}
-#Filter ORFs to remove nested ORFs
-
-my %position_orfs;
-my %orf_size;
-for my $orfid (keys %forward_orfs){
-	my @tarray = split("-", $forward_orfs{$orfid});
-	$orf_size{$orfid}=abs($tarray[1]-$tarray[0]);
-	$position_orfs{$tarray[0]}{$tarray[1]}=$orfid;
-}
-
-my %orf_layout_genome;
-for (my $j=0; $j<=length($plastome)-1; $j++){
-	$orf_layout_genome{$j}=0;
-}
-
-my %good_orfs;
-my @sorted_size_orfs = sort { $orf_size{$b} <=> $orf_size{$a} } keys %orf_size;
-for my $sorted_orfs (@sorted_size_orfs){
-	my @tarray = split("-", $forward_orfs{$sorted_orfs});
-	my $covered=0;
-	for (my $k=$tarray[0]; $k<=$tarray[1]; $k++){
-		if($orf_layout_genome{$k} == 1){
-			$covered++;
-		}
-	}
-	if($covered/($tarray[1]-$tarray[0]) >= 2){
-		next;
-	}
-	else{
-		for (my $k=$tarray[0]; $k<=$tarray[1]; $k++){
-			$orf_layout_genome{$k} = 1;
-		}
-		$good_orfs{$sorted_orfs}=$forward_orfs{$sorted_orfs};
-	}
-}
-
-
-open my $outfile, ">", $ARGV[1] . "_orffinder_coordinates.txt";
-open my $seqfile, ">", $ARGV[1] . "_orffinder_seqs.fsa";
-for my $ssiv (sort keys %good_orfs){
-		$good_orfs{$ssiv} =~ /(\d+)-(\d+)/;
+open my $outfile, ">", $ARGV[1] . "_test_orffinder.txt";
+open my $seqfile, ">", $ARGV[1] . "_test_seqs_orffinder.fsa";
+for my $ssiv (sort keys %forward_orfs){
+		$forward_orfs{$ssiv} =~ /(\d+)-(\d+)/;
 		my $start = $1;
 		my $end = $2;
-		my $tseq = substr($plastome, $start, ($end-$start+1));
+		my $tseq = substr($genome{$chrom}, $start, ($end-$start+1));
 		print $outfile "$ssiv\t$forward_orfs{$ssiv}\n";
 		print $seqfile ">$ssiv\n$tseq\n";
 }
 
-
+}
 sub orf_finder
 {
 	my $cur_plastome = $_[0];
@@ -113,7 +72,7 @@ sub orf_finder
 			$cur_start=();
 			$cur_end=();
 		}
-		for (my $j=$i; $j<=(length($cur_plastome)-2);$j+=3){ 
+		for (my $j=$i; $j<=(length($cur_plastome)-2);$j+=3){
 			my $curcodon=substr($cur_plastome,$j,3);
 			if(exists $codons{$curcodon}){
 				if($current_orf){
