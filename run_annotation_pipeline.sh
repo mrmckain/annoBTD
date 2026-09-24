@@ -158,7 +158,7 @@ if [ -z "${ANNOBTD_SKIP_POSTFILTER:-}" ] && [ -s "$ANNOTATION" ]; then
     perl "$ANNOBTD_DIR/post_filter_annotation.pl" "$PLASTOME" "$ANNOTATION" \
         --guides-dir "${FILEDIR:-./files}" \
         ${ANNOBTD_PROFILE:+--profile "$ANNOBTD_PROFILE"} ${ANNOBTD_LINEAGE_COUNTS:+--lineage-counts "$ANNOBTD_LINEAGE_COUNTS"} \
-        --family "${ANNOBTD_FAMILY:-NA}" --order "${ANNOBTD_ORDER:-NA}" --min-presence "${ANNOBTD_MIN_PRESENCE:-0.5}" \
+        --family "${ANNOBTD_FAMILY:-NA}" --order "${ANNOBTD_ORDER:-NA}" --genus "${ANNOBTD_GENUS:-NA}" --min-presence "${ANNOBTD_MIN_PRESENCE:-0.5}" \
         $( [ -z "${ANNOBTD_NO_ARAGORN:-}" ] && [ -x "${ANNOBTD_ARAGORN:-$ANNOBTD_DIR/bin/aragorn}" ] && printf -- "--aragorn %s --trna-convention %s" "${ANNOBTD_ARAGORN:-$ANNOBTD_DIR/bin/aragorn}" "${ANNOBTD_TRNA_CONVENTION:-$ANNOBTD_DIR/trna_window_residuals.tsv}" ) \
         ${ANNOBTD_SPECIES_UNITS:+--species-units "$ANNOBTD_SPECIES_UNITS"} ${ANNOBTD_SPECIES_GENES:+--species-genes "$ANNOBTD_SPECIES_GENES"} --presence-mode "${ANNOBTD_PRESENCE_MODE:-family}" \
         $( [ -z "${ANNOBTD_NO_TRNA_LIBRARY:-}" ] && [ -s "${ANNOBTD_TRNA_LIBRARY:-$ANNOBTD_DIR/trna_library.fasta}" ] && printf -- "--trna-library %s" "${ANNOBTD_TRNA_LIBRARY:-$ANNOBTD_DIR/trna_library.fasta}" ) ${ANNOBTD_TRNA_LIBRARY_EXCLUDE:+--trna-library-exclude "$ANNOBTD_TRNA_LIBRARY_EXCLUDE"} ${BLAST_BIN:+--blast-bin "$BLAST_BIN"} \

@@ -100,6 +100,24 @@ one splice site on its own, to a perfect GTGYG or to the gene's settled total
 length, was tried and rejected: it broke as many junctions as it fixed, because a
 record can legitimately differ from its lineage's total by a multiple of 3.
 
+### Start codons
+
+The 5' errors left after the junction work were audited one by one against the
+profile. Every truncation a settled expectation could fix began at an ATG, or at
+an ACG in one of the four genes whose start is created by C-to-U editing (ndhD,
+psbL, rpl2, psbC), and was an extension; every case where the expectation would
+have shortened a correct call, or reached a rarer initiator (ATT, TTG, GTG), was
+the record's own convention. So the post filter extends a CDS to the lineage's
+settled length when an ATG, or ACG for those four genes, sits in frame exactly
+there with no stop in between, and never shortens (`START_EXT` lines). A genus
+cell disagreeing with a settled family cell was right in 13 of 16 whole-gene
+cases, but the guides, not the profile, decide differences under 5 percent, so
+a genus override would change nothing and was not added. The remaining 5'
+errors are the records' own: grass ndhK, Nicotiana psbI (ATC) and ycf1 (GTG one
+codon up), Spinacia ndhD (ATC), accD, psbH and rpl22, Marchantia ndhJ. Lowering
+the settled-cell consensus from 0.9 to 0.85 or 0.8 was measured and lost (1278
+and 1269 against 1280 on the hybrid arm at that stage).
+
 ## Reading the output
 
 `results/summary.tsv` has one row per genome. The columns that matter for
@@ -176,12 +194,12 @@ annotation, all tRNA strands and identities the sequence contradicts).
 
 | arm | command | recall / precision | both exact |
 |---|---|---|---|
-| leave-one-out, guides = the other 8 test genomes | `./run_regression.sh --outdir results_loo_spl` | 92.3 / 97.7 | 1166 |
-| curated DB (`../reference_sketches.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches.tsv --nguides 8 --outdir results_db8_oldnew_spl` | 93.8 / 96.5 | 1197 |
-| full DB (`../reference_sketches_full.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_full_spl` | 98.1 / 95.3 | 1269 |
-| hybrid: curated DB when it has 3 same-family guides, else full DB | `./run_regression.sh --db ../reference_sketches.tsv --db2 ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_hybrid_spl` | 98.8 / 95.9 | 1280 |
-| full DB, no guide from the target's genus | add `--exclude-genus` (`results_db8_full_nogenus_spl`) | 97.7 / 95.4 | 1248 |
-| hybrid, no guide from the target's genus | add `--exclude-genus` (`results_db8_hybrid_nogenus_spl`) | 98.3 / 95.9 | 1258 |
+| leave-one-out, guides = the other 8 test genomes | `./run_regression.sh --outdir results_loo_st` | 92.3 / 97.7 | 1170 |
+| curated DB (`../reference_sketches.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches.tsv --nguides 8 --outdir results_db8_oldnew_st` | 93.8 / 96.5 | 1201 |
+| full DB (`../reference_sketches_full.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_full_st` | 98.1 / 95.3 | 1270 |
+| hybrid: curated DB when it has 3 same-family guides, else full DB | `./run_regression.sh --db ../reference_sketches.tsv --db2 ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_hybrid_st` | 98.8 / 95.9 | 1284 |
+| full DB, no guide from the target's genus | add `--exclude-genus` (`results_db8_full_nogenus_st`) | 97.7 / 95.4 | 1251 |
+| hybrid, no guide from the target's genus | add `--exclude-genus` (`results_db8_hybrid_nogenus_st`) | 98.3 / 95.9 | 1262 |
 
 The genus-excluded arms are the numbers to quote for a genome from a lineage the
 database has never seen annotated. Two variants were measured and rejected, and

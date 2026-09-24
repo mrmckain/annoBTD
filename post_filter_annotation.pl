@@ -31,7 +31,7 @@
 #
 # USAGE: post_filter_annotation.pl <plastome.fsa> <annotation.txt> [--guides-dir DIR]
 #        [--profile gene_expect.tsv --lineage-counts lineage_species_counts.tsv
-#         --family F --order O --min-presence 0.5] [--no-rna-dedupe] [--log FILE]
+#         --family F --order O --genus G --min-presence 0.5] [--no-rna-dedupe] [--log FILE]
 #        [--aragorn BIN --trna-convention trna_window_convention.tsv]
 #        [--species-units species_units.tsv --species-genes species_lengths.tsv --presence-mode family|local]
 #        [--trna-library trna_library.fasta --trna-library-exclude name,acc,... --blast-bin DIR]
@@ -351,8 +351,42 @@ if ($seq) {
             } }
 }
 
+# --- 5. a truncated start extended to the lineage's settled length ------------------
+# The guide transfer and the ORF finder favour an internal ATG when the true start
+# is upstream: an edited ACG (ndhD, psbL, rpl2, psbC start ACG in many plastomes,
+# read as AUG after C-to-U editing), or an ATG the hit did not reach. Where the
+# lineage has a SETTLED expectation (family n >= 10 at >= 0.9 consensus; else the
+# genus at n >= 10; else the order) that is LONGER than the call, and an ATG (or,
+# for those four genes, ACG) sits in frame at exactly that length from the 3' end
+# with no stop in between, the start moves there. Extension only: audited over the
+# nine classic genomes, every truncation a settled cell could fix was an ATG/ACG
+# start (Daucus ndhD, psbC, rpoC1; Spinacia psbL), while every case where the cell
+# would have SHORTENED a correct call (Spinacia cemA, Arabidopsis ndhD) or reached
+# a rarer initiator (ATT, TTG, GTG) was a record's own convention. A CDS broken at
+# the 5' end (Spinacia psbL: 85 nt, starting on a stop) is repaired the same way.
+my %extended;
+if ($o{profile} && -s $o{profile} && $seq) {
+    my ($MIN_N, $MIN_CONS, $MIN_N_GENUS) = ($ENV{ANNOBTD_EXPECT_MIN_N} || 10, $ENV{ANNOBTD_EXPECT_MIN_CONSENSUS} || 0.9, $ENV{ANNOBTD_EXPECT_MIN_N_GENUS} || 10);
+    my ($fam, $ord, $gen) = ("F:" . ($o{family} // 'NA'), "O:" . ($o{order} // 'NA'), "G:" . ($o{genus} // $ENV{ANNOBTD_GENUS} // 'NA'));
+    my %want = map { $_ => 1 } ($fam, $ord, $gen); my %cell;
+    open my $ph, "<", $o{profile} or die; <$ph>; while (<$ph>) { chomp; my ($g, $lt, $lin, $nn, $med, $cons) = split /\t/; next unless $want{"$lt:$lin"}; $cell{$g}{"$lt:$lin"} = [$med, $nn, $cons] } close $ph;
+    my $expect = sub { my $g = shift; my $fc = $cell{$g}{$fam}; return ($fc->[0], 'family') if $fc && $fc->[1] >= $MIN_N && $fc->[2] >= $MIN_CONS;
+        my $gc = $cell{$g}{$gen}; if ($gc && $gc->[1] >= $MIN_N_GENUS) { return $gc->[2] >= $MIN_CONS ? ($gc->[0], 'genus') : () }
+        my $oc = $cell{$g}{$ord}; return ($oc->[0], 'order') if $oc && $oc->[1] >= $MIN_N && $oc->[2] >= $MIN_CONS; () };
+    my %edited = map { $_ => 1 } qw(ndhD psbL rpl2 psbC); my %stop = map { $_ => 1 } qw(TAA TAG TGA);
+    for my $i (@feat) { next if $drop{$i}; my $r = $rows[$i]; my $n = $r->[0]; next if $n =~ /^(trn|rrn)/ || $n =~ /_intron/ || $n =~ /^rps12/;
+        next if $n =~ /_exon(\d+)$/ && $1 != 1; (my $base = $n) =~ s/_exon1$//;
+        my ($E, $src) = $expect->($n); next unless $E; my $L = $r->[2] - $r->[1] + 1; next unless $E > $L && $E % 3 == 0;
+        my $d = $r->[3]; my $three = $d eq '+' ? $r->[2] : $r->[1]; my ($a, $b) = $d eq '+' ? ($three - $E + 1, $three) : ($three, $three + $E - 1); next if $a < 1 || $b > $len;
+        my $cds = substr($seq, $a - 1, $b - $a + 1); if ($d eq '-') { $cds = reverse $cds; $cds =~ tr/ACGT/TGCA/ }
+        my $c = substr($cds, 0, 3); next unless $c eq 'ATG' || ($c eq 'ACG' && $edited{$base});
+        my $clean = 1; for (my $p = 3; $p + 3 < length $cds; $p += 3) { if ($stop{substr($cds, $p, 3)}) { $clean = 0; last } } next unless $clean;
+        printf $log "START_EXT\t%s %d-%d %s\t%d -> %d nt (%s at the %s expectation)\n", $n, $r->[1], $r->[2], $d, $L, $E, $c, $src;
+        if ($d eq '+') { $r->[1] = $a } else { $r->[2] = $b } $extended{$i} = 1 }
+}
+
 # --- rewrite, merging intergenic rows around removed features ------------------
-unless (%drop || %moved || %moved_strand || %renamed || %spliced) { close $log if $o{log}; exit 0 }
+unless (%drop || %moved || %moved_strand || %renamed || %spliced || %extended) { close $log if $o{log}; exit 0 }
 my @keep = grep { !$drop{$_} } @feat;
 my @out;
 # feature rows in file order, skipping dropped ones and all old intergenic rows
@@ -368,7 +402,7 @@ push @gaps, ["$prev_name~End", $prev_end + 1, $len, '+'] if $len && $len > $prev
 my @regions = grep { $_->[0] =~ /^(LSC|SSC|IRA|IRB|FULL)$/ } @out; my @features = grep { $_->[0] !~ /^(LSC|SSC|IRA|IRB|FULL)$/ } @out;
 my @merged = sort { $a->[1] <=> $b->[1] || ($a->[0] =~ /~/ ? 0 : 1) <=> ($b->[0] =~ /~/ ? 0 : 1) } (@features, @gaps);
 open my $w, ">", $ann or die; print $w join("\t", @$_), "\n" for @merged, @regions; close $w;
-printf $log "removed %d feature rows, moved %d tRNA rows, re-stranded %d, renamed %d, exon junctions slid %d\n", scalar keys %drop, scalar keys %moved, scalar keys %moved_strand, scalar keys %renamed, scalar keys %spliced; close $log if $o{log};
+printf $log "removed %d feature rows, moved %d tRNA rows, re-stranded %d, renamed %d, exon junctions slid %d, starts extended %d\n", scalar keys %drop, scalar keys %moved, scalar keys %moved_strand, scalar keys %renamed, scalar keys %spliced, scalar keys %extended; close $log if $o{log};
 
 # Structural placement of a tRNA gene inside an ARAGORN window. ARAGORN pads its
 # window with a flanking base at either end whenever that base can pair, so the
