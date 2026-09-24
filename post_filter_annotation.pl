@@ -298,8 +298,61 @@ if ($o{aragorn} && -x $o{aragorn} && $seq) {
         else { printf $log "TRNA_WINDOW\t%s %d-%d %s\t-> %d-%d\n", $r[0][0], $s0, $e0, $g->{d}, $ns, $ne; ($r[0][1], $r[0][2]) = ($ns, $ne); $moved{ $g->{rows}[0] } = 1 } }
 }
 
+# --- 4. splice junctions: the group II boundary motif, then the exon-length convention -
+# A junction transferred from guides often lands 1-3 nt off: exon i ends short by k
+# and exon i+1 starts early by k. In every one of the 127 junctions of the nine
+# classic truth genomes the intron sits at the maximum of the group II boundary
+# motif (5' GTGYG, 3' AY; 120 of 127 start GTGCG/GTGTG, 104 end AC/AT) within 3 nt,
+# and the maximum is unique except for rpl2 (3' AA) and clpP intron 2 (TGGCG..TC),
+# where the lineage's settled exon lengths decide. The family's convention alone is
+# NOT enough: for ndhA, ycf3 and rpl2 the settled cells of whole families sit 1-2 nt
+# off the motif (an annotation tool's habit, propagated), and the records that
+# disagree with them are the ones at the motif. So: each junction slides within
+# +-10 nt to the best motif score (0-7); ties, and only ties, are broken by settled
+# cells (n >= 10, consensus >= 0.9; family, else order), then by the smaller move.
+# The winner must beat the current junction and score at least 4 within 3 nt (the
+# least any curated junction scores) or at least 6 further out, where a chance
+# GTG..AY can appear (clpP intron 2 has a 5 eight nt from the true junction).
+# Trans-spliced exons (rps12 exon 1) are never adjacent and are left alone.
+my %spliced;
+if ($seq) {
+    my ($MIN_N, $MIN_CONS) = ($ENV{ANNOBTD_EXPECT_MIN_N} || 10, $ENV{ANNOBTD_EXPECT_MIN_CONSENSUS} || 0.9);
+    my %cell; if ($o{profile} && -s $o{profile}) { my %want = ("F:" . ($o{family} // 'NA') => 1, "O:" . ($o{order} // 'NA') => 1);
+        open my $ph, "<", $o{profile} or die; <$ph>; while (<$ph>) { chomp; my ($g, $lt, $lin, $nn, $med, $cons) = split /\t/; next unless $want{"$lt:$lin"}; $cell{$g}{"$lt:$lin"} = [$med, $nn, $cons] } close $ph }
+    my $settled = sub { my $g = shift; for my $lin ("F:" . ($o{family} // 'NA'), "O:" . ($o{order} // 'NA')) { my $c = $cell{$g}{$lin} or next; next unless $c->[1] >= $MIN_N; return $c->[2] >= $MIN_CONS ? $c->[0] : undef } undef };
+    my $rc = sub { my $s = reverse shift; $s =~ tr/ACGT/TGCA/; $s };
+    my $motif = sub { my $i = shift; return -1 if length($i) < 8; my $sc = 0; my @m = ('G', 'T', 'G', 'CT', 'G'); for my $p (0 .. 4) { $sc++ if index($m[$p], substr($i, $p, 1)) >= 0 } $sc++ if substr($i, -2, 1) eq 'A'; $sc++ if substr($i, -1) =~ /[CT]/; $sc };
+    my %gene; for my $i (@feat) { next if $drop{$i}; my $r = $rows[$i]; next if $r->[0] =~ /^(trn|rrn)/; next unless $r->[0] =~ /^(.+)_exon(\d+)$/; push @{ $gene{"$1\t$r->[3]"} }, [$2, $i] }
+    for my $key (sort keys %gene) { my ($base, $d) = split /\t/, $key; my @ex = sort { $a->[0] <=> $b->[0] } @{ $gene{$key} };
+        for my $k (0 .. $#ex - 1) { next unless $ex[$k+1][0] == $ex[$k][0] + 1;
+            my ($ra, $rb) = ($rows[$ex[$k][1]], $rows[$ex[$k+1][1]]); my ($ia, $ib) = ($ex[$k][0], $ex[$k+1][0]);
+            next if abs($ra->[1] - $rb->[1]) > 6000;   # not on one transcript (rps12 exon 1)
+            my ($ea, $eb) = ($settled->("${base}_exon$ia"), $settled->("${base}_exon$ib"));
+            my $coords = sub { my $sh = shift; my @na = @$ra[1, 2]; my @nb = @$rb[1, 2]; if ($d eq '+') { $na[1] += $sh; $nb[0] += $sh } else { $na[0] -= $sh; $nb[1] -= $sh } (\@na, \@nb) };
+            my $intron = sub { my ($p, $q) = @_; my ($lo, $hi) = $d eq '+' ? ($p->[1] + 1, $q->[0] - 1) : ($q->[1] + 1, $p->[0] - 1); return '' if $hi < $lo || $lo < 1 || $hi > $len; my $s = substr($seq, $lo - 1, $hi - $lo + 1); $d eq '-' ? $rc->($s) : $s };
+            my %sc; my %mo; for my $sh (-10 .. 10) { my ($na, $nb) = $coords->($sh); next if $na->[1] < $na->[0] || $nb->[1] < $nb->[0];
+                my $m = $motif->($intron->($na, $nb)); next if $m < 0; next if $sh && $m < (abs($sh) <= 3 ? 4 : 6); $mo{$sh} = $m;
+                my $conv = (defined $ea && defined $eb && $na->[1] - $na->[0] + 1 == $ea && $nb->[1] - $nb->[0] + 1 == $eb) ? 1 : 0;
+                $sc{$sh} = $m * 10 + $conv }
+            next unless defined $sc{0};
+            my ($best) = sort { $sc{$b} <=> $sc{$a} || abs($a) <=> abs($b) } keys %sc;
+            printf STDERR "SPLICE_DEBUG %s exon%d|%d %s len %d/%d cells %s/%s scores %s best %d\n", $base, $ia, $ib, $d, $ra->[2]-$ra->[1]+1, $rb->[2]-$rb->[1]+1, $ea // '-', $eb // '-', join(' ', map { "$_:$sc{$_}" } sort { $a <=> $b } keys %sc), $best if $ENV{ANNOBTD_DEBUG_SPLICE};
+            my $iname = "${base}_intron$ia"; my ($irow) = grep { $rows[$_][0] eq $iname && ($d eq '+' ? $rows[$_][1] == $ra->[2] + 1 : $rows[$_][2] == $ra->[1] - 1) } 0 .. $#rows;
+            if ($best != 0 && $sc{$best} > $sc{0}) {
+                my ($na, $nb) = $coords->($best); my ($la, $lb) = ($ra->[2] - $ra->[1] + 1, $rb->[2] - $rb->[1] + 1);
+                printf $log "SPLICE_MOTIF\tslide %s exon%d|exon%d %d/%d -> %d/%d %s (shift %+d, motif %d -> %d%s)\n", $base, $ia, $ib, $la, $lb, $na->[1] - $na->[0] + 1, $nb->[1] - $nb->[0] + 1, $d, $best, $mo{0}, $mo{$best}, ($sc{$best} % 10 ? ', matches the convention' : '');
+                @$ra[1, 2] = @$na; @$rb[1, 2] = @$nb; $spliced{ $ex[$k][1] } = $spliced{ $ex[$k+1][1] } = 1;
+                if (defined $irow) { if ($d eq '+') { $rows[$irow][1] += $best; $rows[$irow][2] += $best } else { $rows[$irow][1] -= $best; $rows[$irow][2] -= $best } } }
+            # Moving one splice site on its own (to a perfect GTGYG, or to the site that
+            # gives the gene its settled total length) was tried and rejected: it broke
+            # as many junctions as it fixed, because a record can legitimately differ
+            # from its lineage's convention by a multiple of 3 (Spinacia ycf3, Nicotiana
+            # rpoC1) and the joint slide already handles the common case.
+            } }
+}
+
 # --- rewrite, merging intergenic rows around removed features ------------------
-unless (%drop || %moved || %moved_strand || %renamed) { close $log if $o{log}; exit 0 }
+unless (%drop || %moved || %moved_strand || %renamed || %spliced) { close $log if $o{log}; exit 0 }
 my @keep = grep { !$drop{$_} } @feat;
 my @out;
 # feature rows in file order, skipping dropped ones and all old intergenic rows
@@ -315,7 +368,7 @@ push @gaps, ["$prev_name~End", $prev_end + 1, $len, '+'] if $len && $len > $prev
 my @regions = grep { $_->[0] =~ /^(LSC|SSC|IRA|IRB|FULL)$/ } @out; my @features = grep { $_->[0] !~ /^(LSC|SSC|IRA|IRB|FULL)$/ } @out;
 my @merged = sort { $a->[1] <=> $b->[1] || ($a->[0] =~ /~/ ? 0 : 1) <=> ($b->[0] =~ /~/ ? 0 : 1) } (@features, @gaps);
 open my $w, ">", $ann or die; print $w join("\t", @$_), "\n" for @merged, @regions; close $w;
-printf $log "removed %d feature rows, moved %d tRNA rows, re-stranded %d, renamed %d\n", scalar keys %drop, scalar keys %moved, scalar keys %moved_strand, scalar keys %renamed; close $log if $o{log};
+printf $log "removed %d feature rows, moved %d tRNA rows, re-stranded %d, renamed %d, exon junctions slid %d\n", scalar keys %drop, scalar keys %moved, scalar keys %moved_strand, scalar keys %renamed, scalar keys %spliced; close $log if $o{log};
 
 # Structural placement of a tRNA gene inside an ARAGORN window. ARAGORN pads its
 # window with a flanking base at either end whenever that base can pair, so the

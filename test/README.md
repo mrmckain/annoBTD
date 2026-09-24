@@ -86,6 +86,20 @@ on the wrong strand at the right place is a miss plus a spurious call flagged
 `wrong_strand`. `./rescore.sh <results_dir>` re-scores an existing run after a
 scorer or truth change without re-annotating.
 
+### Splice junctions
+
+Every one of the 127 exon junctions in the nine classic truth genomes sits at the
+maximum of the plastid group II intron boundary motif (5' GTGYG, 3' AY) within
+10 nt, and the maximum is unique except for rpl2 (3' AA) and clpP intron 2
+(TGGCG..TC). The family's exon-length convention is not that reliable: for ndhA,
+ycf3 and rpl2 the settled cells of whole families sit 1-2 nt off the motif, and
+the records that disagree with those cells are the ones at the motif. So the post
+filter slides each junction to the motif maximum and uses the settled exon
+lengths only to break ties (`SPLICE_MOTIF` lines in the post-filter log). Moving
+one splice site on its own, to a perfect GTGYG or to the gene's settled total
+length, was tried and rejected: it broke as many junctions as it fixed, because a
+record can legitimately differ from its lineage's total by a multiple of 3.
+
 ## Reading the output
 
 `results/summary.tsv` has one row per genome. The columns that matter for
@@ -162,12 +176,12 @@ annotation, all tRNA strands and identities the sequence contradicts).
 
 | arm | command | recall / precision | both exact |
 |---|---|---|---|
-| leave-one-out, guides = the other 8 test genomes | `./run_regression.sh --outdir results_loo_lib` | 92.3 / 97.7 | 1158 |
-| curated DB (`../reference_sketches.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches.tsv --nguides 8 --outdir results_db8_oldnew_lib` | 93.8 / 96.5 | 1177 |
-| full DB (`../reference_sketches_full.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_full_lib` | 98.1 / 95.3 | 1231 |
-| hybrid: curated DB when it has 3 same-family guides, else full DB | `./run_regression.sh --db ../reference_sketches.tsv --db2 ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_hybrid_lib` | 98.8 / 95.9 | 1258 |
-| full DB, no guide from the target's genus | add `--exclude-genus` (`results_db8_full_nogenus_lib`) | 97.7 / 95.4 | 1217 |
-| hybrid, no guide from the target's genus | add `--exclude-genus` (`results_db8_hybrid_nogenus_lib`) | 98.3 / 95.9 | 1233 |
+| leave-one-out, guides = the other 8 test genomes | `./run_regression.sh --outdir results_loo_spl` | 92.3 / 97.7 | 1166 |
+| curated DB (`../reference_sketches.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches.tsv --nguides 8 --outdir results_db8_oldnew_spl` | 93.8 / 96.5 | 1197 |
+| full DB (`../reference_sketches_full.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_full_spl` | 98.1 / 95.3 | 1269 |
+| hybrid: curated DB when it has 3 same-family guides, else full DB | `./run_regression.sh --db ../reference_sketches.tsv --db2 ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_hybrid_spl` | 98.8 / 95.9 | 1280 |
+| full DB, no guide from the target's genus | add `--exclude-genus` (`results_db8_full_nogenus_spl`) | 97.7 / 95.4 | 1248 |
+| hybrid, no guide from the target's genus | add `--exclude-genus` (`results_db8_hybrid_nogenus_spl`) | 98.3 / 95.9 | 1258 |
 
 The genus-excluded arms are the numbers to quote for a genome from a lineage the
 database has never seen annotated. Two variants were measured and rejected, and
