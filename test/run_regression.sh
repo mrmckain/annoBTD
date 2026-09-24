@@ -92,7 +92,7 @@ CONFIG="$OUTDIR/run_config.txt"
              ANNOBTD_SCORE_K:2 ANNOBTD_RANK_K:3 ANNOBTD_SCORE_MIN:0.70 ANNOBTD_EXPECT_MIN_CONSENSUS:0.90 ANNOBTD_EXPECT_WEAK_CONSENSUS:1.01 ANNOBTD_EXPECT_MIN_N:10 ANNOBTD_EXPECT_MIN_N_GENUS:10 \
              ANNOBTD_SPLICE_THRESHOLD:0.5 ANNOBTD_SPLICE_REFINE:unset \
              ANNOBTD_KMER_K:unset ANNOBTD_SKETCH_SIZE:unset ANNOBTD_DENOVO_NODES:120000 \
-             ANNOBTD_SKIP_CHECKS:unset ANNOBTD_TRACE:unset ANNOBTD_PROFILE:unset ANNOBTD_FAMILY:unset ANNOBTD_ORDER:unset ANNOBTD_GUIDE_QUALITY:unset ANNOBTD_MAX_OUTLIERS:3 ANNOBTD_GUIDE_LENGTHS:all_lengths.tsv ANNOBTD_MAX_MISMATCH:2 ANNOBTD_CONSISTENCY_EXON_LENGTH:unset ANNOBTD_CONSISTENCY_EXON_COUNT:unset ANNOBTD_NO_CONSISTENCY:unset ANNOBTD_SPECIES_UNITS:species_units.tsv ANNOBTD_MAX_SPECIES_MISMATCH:unset ANNOBTD_NO_SPECIES_COLLAPSE:unset ANNOBTD_CANDIDATES_MULT:6 ANNOBTD_LINEAGE_COUNTS:lineage_species_counts.tsv ANNOBTD_MIN_PRESENCE:0.5 ANNOBTD_PRESENCE_MODE:family ANNOBTD_SPECIES_GENES:species_lengths.tsv ANNOBTD_SKIP_POSTFILTER:unset ANNOBTD_TAXONOMY_CHECK:taxonomy_consistency.tsv ANNOBTD_NO_TAXONOMY_CHECK:unset ANNOBTD_HYBRID_MIN_FAMILY:3 ANNOBTD_SPECIES_MISMATCH_WEIGHT:0 ANNOBTD_ARAGORN:bin/aragorn ANNOBTD_TRNA_CONVENTION:trna_window_residuals.tsv ANNOBTD_NO_ARAGORN:unset \
+             ANNOBTD_SKIP_CHECKS:unset ANNOBTD_TRACE:unset ANNOBTD_PROFILE:unset ANNOBTD_FAMILY:unset ANNOBTD_ORDER:unset ANNOBTD_GUIDE_QUALITY:unset ANNOBTD_MAX_OUTLIERS:3 ANNOBTD_GUIDE_LENGTHS:all_lengths.tsv ANNOBTD_MAX_MISMATCH:2 ANNOBTD_CONSISTENCY_EXON_LENGTH:unset ANNOBTD_CONSISTENCY_EXON_COUNT:unset ANNOBTD_NO_CONSISTENCY:unset ANNOBTD_SPECIES_UNITS:species_units.tsv ANNOBTD_MAX_SPECIES_MISMATCH:unset ANNOBTD_NO_SPECIES_COLLAPSE:unset ANNOBTD_CANDIDATES_MULT:6 ANNOBTD_LINEAGE_COUNTS:lineage_species_counts.tsv ANNOBTD_MIN_PRESENCE:0.5 ANNOBTD_PRESENCE_MODE:family ANNOBTD_SPECIES_GENES:species_lengths.tsv ANNOBTD_SKIP_POSTFILTER:unset ANNOBTD_TAXONOMY_CHECK:taxonomy_consistency.tsv ANNOBTD_NO_TAXONOMY_CHECK:unset ANNOBTD_HYBRID_MIN_FAMILY:3 ANNOBTD_SPECIES_MISMATCH_WEIGHT:0 ANNOBTD_ARAGORN:bin/aragorn ANNOBTD_TRNA_CONVENTION:trna_window_residuals.tsv ANNOBTD_NO_ARAGORN:unset ANNOBTD_TRNA_LIBRARY:trna_library.fasta ANNOBTD_NO_TRNA_LIBRARY:unset \
              ANNOBTD_DEBUG_COORDS:unset ANNOBTD_DEBUG_SPLICE:unset ; do
         name="${v%%:*}"; def="${v##*:}"
         if [ -n "${!name+x}" ]; then echo "$name	${!name}	set"
@@ -125,6 +125,8 @@ for target in "${GENOMES[@]}"; do
     tacc=$(grep -m1 '^>' "$DATA/$target.fsa" | sed 's/^>\([^ .]*\).*/\1/')
     read -r ANNOBTD_FAMILY ANNOBTD_ORDER <<< "$(awk -F'\t' -v a="$tacc" 'NR>1{b=$1; sub(/\.[0-9]+$/,"",b); if(b==a){print $6" "$7; exit}}' "$TAXTABLE")"
     export ANNOBTD_FAMILY="${ANNOBTD_FAMILY:-NA}" ANNOBTD_ORDER="${ANNOBTD_ORDER:-NA}"
+    # the tRNA sequence library must not name a gene from the target's own record
+    export ANNOBTD_TRNA_LIBRARY_EXCLUDE="$target,$tacc"
     # genus: first word of the organism name in the taxonomy table (hybrids "x Genus" allowed)
     ANNOBTD_GENUS=$(awk -F'\t' -v a="$tacc" 'NR>1{b=$1; sub(/\.[0-9]+$/,"",b); if(b==a){n=split($2,w," "); g=w[1]; if(g=="x" && n>1) g=w[2]; if(g ~ /^[A-Z][a-z]+$/) print g; exit}}' "$TAXTABLE"); export ANNOBTD_GENUS="${ANNOBTD_GENUS:-NA}"
     PROFILE_FILE="${ANNOBTD_PROFILE_FILE:-$(pwd)/gene_expect.tsv}"

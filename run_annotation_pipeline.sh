@@ -151,7 +151,9 @@ ANNOTATION="${SP}_VERDANT_cleaned_annotation.txt"
 # (coordinates decided by acceptor-stem pairing), and drop CDS genes annotated in
 # fewer than ANNOBTD_MIN_PRESENCE (0.5) of the target lineage's species (needs
 # ANNOBTD_PROFILE, ANNOBTD_LINEAGE_COUNTS, ANNOBTD_FAMILY/ORDER). ANNOBTD_SKIP_POSTFILTER
-# disables it.
+# disables it. tRNA names are settled by sequence against trna_library.fasta
+# (build_trna_library.pl; ANNOBTD_TRNA_LIBRARY to point elsewhere, ANNOBTD_NO_TRNA_LIBRARY
+# to skip, ANNOBTD_TRNA_LIBRARY_EXCLUDE=name,acc,... to leave the genome's own entries out).
 if [ -z "${ANNOBTD_SKIP_POSTFILTER:-}" ] && [ -s "$ANNOTATION" ]; then
     perl "$ANNOBTD_DIR/post_filter_annotation.pl" "$PLASTOME" "$ANNOTATION" \
         --guides-dir "${FILEDIR:-./files}" \
@@ -159,6 +161,7 @@ if [ -z "${ANNOBTD_SKIP_POSTFILTER:-}" ] && [ -s "$ANNOTATION" ]; then
         --family "${ANNOBTD_FAMILY:-NA}" --order "${ANNOBTD_ORDER:-NA}" --min-presence "${ANNOBTD_MIN_PRESENCE:-0.5}" \
         $( [ -z "${ANNOBTD_NO_ARAGORN:-}" ] && [ -x "${ANNOBTD_ARAGORN:-$ANNOBTD_DIR/bin/aragorn}" ] && printf -- "--aragorn %s --trna-convention %s" "${ANNOBTD_ARAGORN:-$ANNOBTD_DIR/bin/aragorn}" "${ANNOBTD_TRNA_CONVENTION:-$ANNOBTD_DIR/trna_window_residuals.tsv}" ) \
         ${ANNOBTD_SPECIES_UNITS:+--species-units "$ANNOBTD_SPECIES_UNITS"} ${ANNOBTD_SPECIES_GENES:+--species-genes "$ANNOBTD_SPECIES_GENES"} --presence-mode "${ANNOBTD_PRESENCE_MODE:-family}" \
+        $( [ -z "${ANNOBTD_NO_TRNA_LIBRARY:-}" ] && [ -s "${ANNOBTD_TRNA_LIBRARY:-$ANNOBTD_DIR/trna_library.fasta}" ] && printf -- "--trna-library %s" "${ANNOBTD_TRNA_LIBRARY:-$ANNOBTD_DIR/trna_library.fasta}" ) ${ANNOBTD_TRNA_LIBRARY_EXCLUDE:+--trna-library-exclude "$ANNOBTD_TRNA_LIBRARY_EXCLUDE"} ${BLAST_BIN:+--blast-bin "$BLAST_BIN"} \
         --log "${SP}_post_filter.txt" || true
 fi
 if [ -z "${ANNOBTD_SKIP_CHECKS:-}" ] && [ -s "$ANNOTATION" ]; then

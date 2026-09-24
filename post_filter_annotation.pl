@@ -34,6 +34,7 @@
 #         --family F --order O --min-presence 0.5] [--no-rna-dedupe] [--log FILE]
 #        [--aragorn BIN --trna-convention trna_window_convention.tsv]
 #        [--species-units species_units.tsv --species-genes species_lengths.tsv --presence-mode family|local]
+#        [--trna-library trna_library.fasta --trna-library-exclude name,acc,... --blast-bin DIR]
 #    presence-mode local: the guide-count condition is replaced by the share of the
 #    guides' SPECIES (their one-vote-per-group consensus gene sets) that carry the gene,
 #    so one guide's odd record no longer decides; falls back to the guide count when no
@@ -51,7 +52,7 @@ my %pair = map { $_ => 1 } qw(AT TA GC CG GT TG);
 sub stem_score { my ($s0, $e0, $dir) = @_; return 0 unless $seq && $s0 >= 1 && $e0 <= $len; my $t = substr($seq, $s0 - 1, $e0 - $s0 + 1);
     if ($dir eq '-') { $t = reverse $t; $t =~ tr/ACGT/TGCA/ } my $L = length $t; my $n = 0; for my $i (0 .. 6) { $n++ if $pair{ substr($t, $i, 1) . substr($t, $L - 1 - $i, 1) } } $n }
 
-my (@rows, @feat);
+my (@rows, @feat, %moved_strand);
 open my $h, "<", $ann or die "$ann: $!";
 while (<$h>) { chomp; next unless /\S/; my @f = split /\t/; push @rows, \@f;
     next if $f[0] =~ /~/ || $f[0] =~ /^(LSC|SSC|IRA|IRB|FULL)$/; push @feat, $#rows }
@@ -60,6 +61,20 @@ sub in_ir { my ($s, $e) = @_; for my $r (@ir) { return 1 if $s >= $r->[0] && $e 
 close $h;
 my $log = $o{log} ? do { open my $l, ">", $o{log} or die; $l } : \*STDERR;
 my %drop;
+
+# ARAGORN gene calls (strand, extent, intron status, identity), used by the strand
+# rules in section 1 and the window refinement in section 3. Run once.
+my @ar;
+if ($o{aragorn} && -x $o{aragorn} && $seq && open my $ah, "-|", $o{aragorn}, '-t', '-i', '-w', '-gcbact', $fsa) {
+    my %aa3 = (Ala=>'A',Arg=>'R',Asn=>'N',Asp=>'D',Cys=>'C',Gln=>'Q',Glu=>'E',Gly=>'G',His=>'H',Ile=>'I',Leu=>'L',Lys=>'K',Met=>'M',Phe=>'F',Pro=>'P',Ser=>'S',Thr=>'T',Trp=>'W',Tyr=>'Y',Val=>'V',fMet=>'fM');
+    while (<$ah>) { next unless /^\d+\s+tRNA-(\w+)\s+(c?)\[(\d+),(\d+)\]\s+\d+\s+\((\w+)\)(.*)/; my ($aa, $c, $gs, $ge, $ac, $rest) = ($1, $2, $3, $4, $5, $6);
+        (my $acu = uc $ac) =~ tr/T/U/; my $id = 'trn' . ($aa3{$aa} // $aa) . "-$acu";
+        push @ar, { s => $gs, e => $ge, d => ($c ? '-' : '+'), intron => ($rest =~ /i\(\d+,\d+\)/ ? 1 : 0), id => $id } } close $ah }
+# longest overlap of [s,e] with an ARAGORN gene on strand d, and that gene
+sub ar_overlap { my ($s, $e, $d) = @_; my ($bo, $bx) = (0, undef);
+    for my $x (@ar) { next unless $x->{d} eq $d; my $lo = $s > $x->{s} ? $s : $x->{s}; my $hi = $e < $x->{e} ? $e : $x->{e}; my $ov = $hi - $lo + 1; ($bo, $bx) = ($ov, $x) if $ov > $bo }
+    return ($bo, $bx) }
+my %spliced_letter = (trnI => 'trnI-GAU', trnA => 'trnA-UGC', trnK => 'trnK-UUU', trnG => 'trnG-UCC', trnL => 'trnL-UAA', trnV => 'trnV-UAC');
 
 # --- 1. RNA de-duplication ---------------------------------------------------
 unless ($o{'no-rna-dedupe'}) {
@@ -88,11 +103,22 @@ unless ($o{'no-rna-dedupe'}) {
         $stem_cache{$k} = $v }
     for my $i (0 .. $#rna) { for my $j ($i + 1 .. $#rna) {
         my ($a, $b) = ($rows[$rna[$i]], $rows[$rna[$j]]); next if $drop{$rna[$i]} || $drop{$rna[$j]};
-        next unless $a->[3] eq $b->[3];
         my $lo = $a->[1] > $b->[1] ? $a->[1] : $b->[1]; my $hi = $a->[2] < $b->[2] ? $a->[2] : $b->[2];
         my $ov = $hi - $lo + 1; next if $ov <= 0;
         my ($la, $lb) = ($a->[2] - $a->[1] + 1, $b->[2] - $b->[1] + 1); next if $ov < 0.5 * ($la < $lb ? $la : $lb);
         (my $na = $a->[0]) =~ s/_exon\d+$//; (my $nb = $b->[0]) =~ s/_exon\d+$//;
+        # The same tRNA called on BOTH strands (a guide hit on the reverse complement:
+        # the wrong-strand name even carries the reverse-complement anticodon, trnS-UCA
+        # for trnS-UGA). The acceptor stem cannot tell: a stem is its own reverse
+        # complement. ARAGORN's whole-structure call decides; without it, guide
+        # support, then the first call. Intron rows are not calls and are skipped.
+        if ($a->[3] ne $b->[3]) { next unless $a->[0] =~ /^trn/ && $b->[0] =~ /^trn/; next if $a->[0] =~ /_intron/ || $b->[0] =~ /_intron/;
+            my ($oa) = ar_overlap($a->[1], $a->[2], $a->[3]); my ($ob) = ar_overlap($b->[1], $b->[2], $b->[3]);
+            my ($ga, $gb) = ($oa >= 0.5 * $la ? 1 : 0, $ob >= 0.5 * $lb ? 1 : 0);
+            my $keep_a = ($ga <=> $gb || ($support{$na} // 0) <=> ($support{$nb} // 0) || 1) > 0;
+            my ($w, $l) = $keep_a ? ($rna[$i], $rna[$j]) : ($rna[$j], $rna[$i]); $drop{$l} = 1;
+            printf $log "RNA_STRAND\tdrop %s %d-%d %s\tkeep %s %d-%d %s (aragorn %s/%s, guides %d/%d)\n", $rows[$l][0], $rows[$l][1], $rows[$l][2], $rows[$l][3], $rows[$w][0], $rows[$w][1], $rows[$w][2], $rows[$w][3],
+                ($keep_a ? ($ga, $gb, $support{$na} // 0, $support{$nb} // 0) : ($gb, $ga, $support{$nb} // 0, $support{$na} // 0)); next }
         # exons of one spliced tRNA never overlap each other; same-name exon pairs are IR copies, skip
         next if $na eq $nb && $a->[0] ne $b->[0];
         # an unspliced call overlapping an exon of a spliced tRNA is a guide's intron-less
@@ -129,6 +155,67 @@ unless ($o{'no-rna-dedupe'}) {
         printf $log "RNA_DUP\tdrop %s %d-%d %s\tkeep %s %d-%d (stem %d/%d, guides %d/%d)\n", $rows[$loser][0], $rows[$loser][1], $rows[$loser][2], $rows[$loser][3],
             $rows[$winner][0], $rows[$winner][1], $rows[$winner][2], ($keep_a ? ($sa[0], $sb[0], $sa[1], $sb[1]) : ($sb[0], $sa[0], $sb[1], $sa[1]));
     } }
+}
+
+# --- 1a. a tRNA on the strand ARAGORN does not see ------------------------------
+# A lone call whose extent ARAGORN covers (>= 50%) only on the OTHER strand is the
+# right gene on the wrong strand: flip it. A name carrying an anticodon takes
+# ARAGORN's identity (unspliced genes; reliable) or the letter's one spliced
+# identity, since the anticodon it carried was read off the wrong strand.
+if (@ar && !$o{'no-rna-dedupe'}) {
+    for my $i (@feat) { next if $drop{$i}; my $r = $rows[$i]; next unless $r->[0] =~ /^trn/; next if $r->[0] =~ /_intron/;
+        my $L = $r->[2] - $r->[1] + 1; my $od = $r->[3] eq '+' ? '-' : '+';
+        my ($same) = ar_overlap($r->[1], $r->[2], $r->[3]); my ($opp, $ox) = ar_overlap($r->[1], $r->[2], $od);
+        next unless $same < 0.5 * $L && $opp >= 0.5 * $L;
+        my $old = $r->[0]; my $ex = $old =~ /(_exon\d+)$/ ? $1 : ''; (my $base = $old) =~ s/_exon\d+$//;
+        if ($base =~ /^(trn[A-Za-z]{1,2})-[ACGU]{3}$/) { my $letter = $1; $r->[0] = ($ex ? ($spliced_letter{$letter} // $base) : ($ox->{id} =~ /^\Q$letter\E-/ ? $ox->{id} : $base)) . $ex }
+        printf $log "RNA_STRAND\tflip %s %d-%d %s\t-> %s %s (aragorn %s %d-%d %s)\n", $old, $r->[1], $r->[2], $r->[3], $r->[0], $od, $ox->{id}, $ox->{s}, $ox->{e}, $od; $r->[3] = $od; $moved_strand{$i} = 1 }
+}
+
+# --- 1c. tRNA identity from sequence ---------------------------------------------
+# A name transferred from guides repeats GenBank's confusions: the three CAU tRNAs
+# (trnI-CAU in the IR, trnM-CAU beside atpE, trnfM-CAU beside rps14) swapped, trnG-GCC
+# for trnG-UCC, a spliced tRNA's exons handed to another letter when no close guide
+# exists. The sequence settles it. Each call's spliced sequence is BLASTed against
+# the curated library (--trna-library, build_trna_library.pl: one entry per identity
+# per curated genome) and takes the best identity when that identity wins by a
+# margin: alignment covering >= 80% of the call, >= 75% identity, and the best hit
+# of any OTHER identity at <= 90% of the top bit score (the worst real margin in the
+# library is 70%, Marchantia trnG-GCC against trnG-UCC). Entries from the genome
+# itself are left out (--trna-library-exclude name,accession,...) so a benchmark
+# cannot name a gene from its own record. A bare name gains its anticodon.
+my %renamed;
+if ($o{'trna-library'} && -s $o{'trna-library'} && $seq && !$o{'no-rna-dedupe'}) {
+    my $blastn = $o{'blast-bin'} ? "$o{'blast-bin'}/blastn" : $ENV{BLAST_BIN} ? "$ENV{BLAST_BIN}/blastn" : (grep { -x $_ } map { "$_/blastn" } split /:/, $ENV{PATH})[0];
+    if ($blastn && -x $blastn) {
+        require File::Temp; my $dir = File::Temp::tempdir(CLEANUP => 1);
+        my %excl = map { $_ => 1 } grep { length } split /,/, ($o{'trna-library-exclude'} // '');
+        my ($nlib, $nex) = (0, 0); open my $lf, "<", $o{'trna-library'} or die; open my $lo, ">", "$dir/lib.fa" or die; my $skip = 0;
+        while (<$lf>) { if (/^>(\S+)/) { my @h = split /\|/, $1; $skip = (grep { $excl{$_} } @h) ? 1 : 0; $nex++ if $skip; $nlib++ unless $skip } print $lo $_ unless $skip } close $lf; close $lo;
+        # calls: exon rows of one letter and strand within 3.5 kb form one gene
+        my @tg; for my $i (@feat) { next if $drop{$i}; my $r = $rows[$i]; next unless $r->[0] =~ /^trn/ && $r->[0] !~ /_intron/;
+            (my $n = $r->[0]) =~ s/_exon\d+$//; my $ex = $r->[0] =~ /_exon\d+$/ ? 1 : 0; (my $letter = $n) =~ s/-[ACGU]{3}$//; my $grp;
+            if ($ex) { for my $g (@tg) { next unless $g->{ex} && $g->{letter} eq $letter && $g->{d} eq $r->[3] && @{ $g->{rows} } < 2; if (grep { abs($rows[$_][1] - $r->[1]) < 3500 } @{ $g->{rows} }) { $grp = $g; last } } }
+            unless ($grp) { $grp = { n => $n, letter => $letter, d => $r->[3], rows => [], ex => $ex }; push @tg, $grp } push @{ $grp->{rows} }, $i }
+        open my $qf, ">", "$dir/q.fa" or die; my $nq = 0;
+        # a lone exon (its partner never called) is queried on its own: 30+ nt of a
+        # spliced tRNA still names it, and the margin rule guards the call
+        for my $k (0 .. $#tg) { my $g = $tg[$k]; next if $g->{ex} && @{ $g->{rows} } > 2;
+            my @r = sort { $a->[1] <=> $b->[1] } map { $rows[$_] } @{ $g->{rows} }; my $s = join '', map { substr($seq, $_->[1] - 1, $_->[2] - $_->[1] + 1) } @r;
+            if ($g->{d} eq '-') { $s = reverse $s; $s =~ tr/ACGT/TGCA/ } next if length($s) < 30; print $qf ">$k\n$s\n"; $nq++ } close $qf;
+        my %hit;   # query -> identity -> best bits (coverage-qualified)
+        if ($nq && $nlib && open my $bh, "-|", $blastn, '-task', 'blastn', '-word_size', '7', '-dust', 'no', '-evalue', '1e-3', '-query', "$dir/q.fa", '-subject', "$dir/lib.fa", '-outfmt', '6 qseqid sseqid pident length qlen bitscore') {
+            while (<$bh>) { chomp; my ($q, $sid, $pid, $len, $qlen, $bits) = split /\t/; next if $len < 0.8 * $qlen || $pid < 75; my ($id) = split /\|/, $sid;
+                $hit{$q}{$id} = [$bits, $pid] if !$hit{$q}{$id} || $bits > $hit{$q}{$id}[0] } close $bh }
+        printf $log "RNA_LIBRARY\t%d calls against %d library entries (%d excluded as the genome's own)\n", $nq, $nlib, $nex;
+        for my $k (sort { $a <=> $b } keys %hit) { my $g = $tg[$k]; my @ids = sort { $hit{$k}{$b}[0] <=> $hit{$k}{$a}[0] } keys %{ $hit{$k} };
+            my ($best, $second) = ($ids[0], $ids[1]); my ($bb, $bp) = @{ $hit{$k}{$best} }; my $sb = $second ? $hit{$k}{$second}[0] : 0;
+            if ($second && $sb > 0.9 * $bb) { printf $log "RNA_LIBRARY\tkeep %s %d-%d %s\tambiguous: %s %.0f bits vs %s %.0f\n", $g->{n}, $rows[$g->{rows}[0]][1], $rows[$g->{rows}[0]][2], $g->{d}, $best, $bb, $second, $sb; next }
+            next if $g->{n} eq $best;
+            my $why = $g->{n} =~ /-[ACGU]{3}$/ ? 'rename' : ($best =~ /^\Q$g->{n}\E-/ ? 'anticodon' : 'rename');
+            for my $i (@{ $g->{rows} }) { my $ex = $rows[$i][0] =~ /(_exon\d+)$/ ? $1 : ''; $rows[$i][0] = $best . $ex; $renamed{$i} = 1 }
+            printf $log "RNA_LIBRARY\t%s %s %d-%d %s\t-> %s (%.1f%% identity, %.0f bits; runner-up %s %.0f)\n", $why, $g->{n}, $rows[$g->{rows}[0]][1], $rows[$g->{rows}[0]][2], $g->{d}, $best, $bp, $bb, $second // '-', $sb; $g->{n} = $best }
+    } else { print $log "RNA_LIBRARY\tskipped: no blastn (set BLAST_BIN)\n" }
 }
 
 # --- 1b. tRNA identities no plastid carries -------------------------------------
@@ -181,11 +268,6 @@ if ($o{aragorn} && -x $o{aragorn} && $seq) {
     my %conv; if ($o{'trna-convention'} && open my $cf, "<", $o{'trna-convention'}) { while (<$cf>) { next if /^#/; my ($id, $off) = split; $conv{$id} = [$1, $2] if $off && $off =~ m{^(-?\d+)/(-?\d+)$} } close $cf }   # residuals file
     # curated exon lengths per spliced identity (trna_exon_lengths.tsv beside the convention file)
     my %exlen; if ($o{'trna-convention'}) { (my $ef = $o{'trna-convention'}) =~ s{[^/]*$}{trna_exon_lengths.tsv}; if (open my $eh, "<", $ef) { while (<$eh>) { next if /^#/; my ($id, $l) = split; $exlen{$id} = [$1, $2] if $l && $l =~ m{^(\d+)/(\d+)$} } close $eh } }
-    my @ar; if (open my $ah, "-|", $o{aragorn}, '-t', '-i', '-w', '-gcbact', $fsa) {
-        my %aa3 = (Ala=>'A',Arg=>'R',Asn=>'N',Asp=>'D',Cys=>'C',Gln=>'Q',Glu=>'E',Gly=>'G',His=>'H',Ile=>'I',Leu=>'L',Lys=>'K',Met=>'M',Phe=>'F',Pro=>'P',Ser=>'S',Thr=>'T',Trp=>'W',Tyr=>'Y',Val=>'V',fMet=>'fM');
-        while (<$ah>) { next unless /^\d+\s+tRNA-(\w+)\s+(c?)\[(\d+),(\d+)\]\s+\d+\s+\((\w+)\)(.*)/; my ($aa, $c, $gs, $ge, $ac, $rest) = ($1, $2, $3, $4, $5, $6);
-            (my $acu = uc $ac) =~ tr/T/U/; my $id = 'trn' . ($aa3{$aa} // $aa) . "-$acu";
-            push @ar, { s => $gs, e => $ge, d => ($c ? '-' : '+'), intron => ($rest =~ /i\(\d+,\d+\)/ ? 1 : 0), id => $id } } close $ah }
     # group tRNA rows into genes: exon rows of one name and strand within 3.5 kb
     # exons pair by tRNA LETTER (de-duplication can leave one exon named trnG-UCC and
     # its partner trnG); the pair then takes the anticodon-bearing name if either has it
@@ -217,7 +299,7 @@ if ($o{aragorn} && -x $o{aragorn} && $seq) {
 }
 
 # --- rewrite, merging intergenic rows around removed features ------------------
-unless (%drop || %moved) { close $log if $o{log}; exit 0 }
+unless (%drop || %moved || %moved_strand || %renamed) { close $log if $o{log}; exit 0 }
 my @keep = grep { !$drop{$_} } @feat;
 my @out;
 # feature rows in file order, skipping dropped ones and all old intergenic rows
@@ -233,7 +315,7 @@ push @gaps, ["$prev_name~End", $prev_end + 1, $len, '+'] if $len && $len > $prev
 my @regions = grep { $_->[0] =~ /^(LSC|SSC|IRA|IRB|FULL)$/ } @out; my @features = grep { $_->[0] !~ /^(LSC|SSC|IRA|IRB|FULL)$/ } @out;
 my @merged = sort { $a->[1] <=> $b->[1] || ($a->[0] =~ /~/ ? 0 : 1) <=> ($b->[0] =~ /~/ ? 0 : 1) } (@features, @gaps);
 open my $w, ">", $ann or die; print $w join("\t", @$_), "\n" for @merged, @regions; close $w;
-printf $log "removed %d feature rows, moved %d tRNA rows\n", scalar keys %drop, scalar keys %moved; close $log if $o{log};
+printf $log "removed %d feature rows, moved %d tRNA rows, re-stranded %d, renamed %d\n", scalar keys %drop, scalar keys %moved, scalar keys %moved_strand, scalar keys %renamed; close $log if $o{log};
 
 # Structural placement of a tRNA gene inside an ARAGORN window. ARAGORN pads its
 # window with a flanking base at either end whenever that base can pair, so the

@@ -69,11 +69,22 @@ them into `refresh.new/` and `--install` swaps them in, moving the previous set 
 | `gene_expect.tsv`, `gene_profile.tsv` | `build_expect_from_lengths.pl` | species-voted length expectations by genus / family / order / all |
 | `lineage_species_counts.tsv` | `refresh_references.sh` | species per family and order, the presence prior's denominator |
 | `trna_window_residuals.tsv`, `trna_exon_lengths.tsv` | curated by hand | tRNA boundary convention used by the ARAGORN refinement and `../recurate_trna.pl` |
+| `../trna_library.fasta` | `../build_trna_library.pl` over the 51 truth sets | one sequence per tRNA identity per curated genome; the post filter names every tRNA call by its best hit, leaving the target's own entries out |
+| `truth_curation.tsv` | by hand | every edit made to a truth table beyond what its GenBank record says, with the evidence (tRNA strands and identities the sequence contradicts) |
 
 Superseded versions of these tables, the record-voted profile pipeline's
 intermediates (`cds_rows*.tsv`, `guide_quality*.tsv`), truth-table backups from the
 tRNA recuration and every result directory not listed under "Current reference
 numbers" live in `archive/`. Nothing reads from there; it can be deleted.
+
+### How a match is scored
+
+`compare_annotations.pl` pairs a prediction with a truth row of the same gene
+(names normalised: anticodon suffix and exon number ignored for tRNAs) on the same
+strand, nearest first, and only when the two overlap or lie within 500 nt. A call
+on the wrong strand at the right place is a miss plus a spurious call flagged
+`wrong_strand`. `./rescore.sh <results_dir>` re-scores an existing run after a
+scorer or truth change without re-annotating.
 
 ## Reading the output
 
