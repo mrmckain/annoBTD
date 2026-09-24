@@ -156,24 +156,27 @@ any remaining algorithmic change.
 The arms below are the ones every later change is measured against. All nine
 truth tables (and the 12 Asparagaceae and 30 grass tables in `asp/` and
 `curated/`) sit on one tRNA convention (`../recurate_trna.pl`, ARAGORN 1.2.41).
-"both exact" counts features with both boundaries correct, out of 1,331 truth
-features.
+"both exact" counts features with both boundaries correct, out of 1,330 truth
+features (`truth_curation.tsv` lists the six edits made to the records' own
+annotation, all tRNA strands and identities the sequence contradicts).
 
 | arm | command | recall / precision | both exact |
 |---|---|---|---|
-| leave-one-out, guides = the other 8 test genomes | `./run_regression.sh --outdir results_loo_gen` | | 1150 |
-| curated DB (`../reference_sketches.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches.tsv --nguides 8 --outdir results_db8_oldnew_cl` | | 1168 |
-| full DB (`../reference_sketches_full.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_full_cl` | 97.2 / 93.6 | 1208 |
-| hybrid: curated DB when it has 3 same-family guides, else full DB | `./run_regression.sh --db ../reference_sketches.tsv --db2 ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_hybrid_gen` | 98.1 / 94.8 | 1246 |
-| full DB, no guide from the target's genus | add `--exclude-genus` (`results_db8_full_nogenus`) | 97.1 / 94.0 | 1198 |
-| hybrid, no guide from the target's genus | add `--exclude-genus` (`results_db8_hybrid_nogenus`) | 98.0 / 95.3 | 1226 |
+| leave-one-out, guides = the other 8 test genomes | `./run_regression.sh --outdir results_loo_lib` | 92.3 / 97.7 | 1158 |
+| curated DB (`../reference_sketches.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches.tsv --nguides 8 --outdir results_db8_oldnew_lib` | 93.8 / 96.5 | 1177 |
+| full DB (`../reference_sketches_full.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_full_lib` | 98.1 / 95.3 | 1231 |
+| hybrid: curated DB when it has 3 same-family guides, else full DB | `./run_regression.sh --db ../reference_sketches.tsv --db2 ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_hybrid_lib` | 98.8 / 95.9 | 1258 |
+| full DB, no guide from the target's genus | add `--exclude-genus` (`results_db8_full_nogenus_lib`) | 97.7 / 95.4 | 1217 |
+| hybrid, no guide from the target's genus | add `--exclude-genus` (`results_db8_hybrid_nogenus_lib`) | 98.3 / 95.9 | 1233 |
 
 The genus-excluded arms are the numbers to quote for a genome from a lineage the
 database has never seen annotated. Two variants were measured and rejected, and
 their result directories are kept for the record: ranking guides by within-species
-disagreement (`results_db8_hybrid_w0.005`, `_w0.02`: 1235, 1231) and the presence
-prior taken from the guides' nearest species instead of the family
-(`results_db8_{full,hybrid}_local`: no gain, one more spurious ORF).
+disagreement (`results_db8_hybrid_w0.005`, `_w0.02`) and the presence prior taken
+from the guides' nearest species instead of the family
+(`results_db8_{full,hybrid}_local`: no gain, one more spurious ORF). Both predate
+the tRNA strand rules and sequence library, so compare them with the archived
+`results_db8_hybrid_gen` (1248 on the corrected truth), not with the table.
 
 ## Self-annotation: the upper bound
 
