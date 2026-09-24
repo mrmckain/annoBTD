@@ -1,0 +1,14 @@
+# synonym	canonical   - plastid gene symbols that differ between GenBank records for
+# the same gene. Matched case-insensitively; unlisted names are case-folded to the
+# canonical spelling when they match a canonical name ignoring case.
+clpP1	clpP
+pafI	ycf3
+pafII	ycf4
+pbf1	psbN
+lhbA	psbZ
+ycf9	psbZ
+psb30	ycf12
+TIC214	ycf1
+ycf10	cemA
+ycf5	ccsA
+ycf6	petN
