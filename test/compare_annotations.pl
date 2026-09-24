@@ -4,7 +4,15 @@ use warnings;
 
 # Boundary-accuracy diff between an annoBTD result and a GenBank truth table.
 #
-# USAGE: compare_annotations.pl <truth.tsv> <SPECIES_VERDANT_cleaned_annotation.txt> [--detail out.tsv] [--label NAME]
+# USAGE: compare_annotations.pl <truth.tsv> <SPECIES_VERDANT_cleaned_annotation.txt> [--detail out.tsv] [--label NAME] [--max-dist N]
+#
+# A prediction matches a truth row only on the SAME STRAND and only when the two
+# overlap or their centres lie within --max-dist nt (default 500). Both rules were
+# absent once: a trnS called on the wrong strand at the right coordinates scored
+# as an exact match, and a Marchantia trnM was "matched" to a call 38 kb away,
+# hiding one miss and one spurious call. A wrong-strand call at the right place is
+# now a miss plus a spurious call flagged wrong_strand, and is counted under
+# "strand errors".
 #
 # truth.tsv comes from gb_to_truth.pl:  gene start end strand type flags
 # The annoBTD file is:                  gene start end dir
@@ -18,12 +26,14 @@ my ($truth_file, $pred_file, @rest) = @ARGV;
 die "usage: $0 <truth.tsv> <annoBTD_annotation.txt> [--detail out.tsv] [--label NAME]\n"
     unless defined $pred_file;
 
-my ($detail_file, $label);
+my ($detail_file, $label, $max_dist);
 while (@rest) {
     my $a = shift @rest;
     $detail_file = shift @rest if $a eq '--detail';
     $label       = shift @rest if $a eq '--label';
+    $max_dist    = shift @rest if $a eq '--max-dist';
 }
+$max_dist = 500 unless defined $max_dist;
 $label ||= $pred_file;
 
 # Regions and intergenic spacers annoBTD emits that are not genes.
@@ -108,7 +118,11 @@ for my $p (@$pred) {
     unless ($cands) { $p->{nogene} = 1; next }
     my $pmid = ($p->{start} + $p->{end}) / 2;
     for my $t (@$cands) {
-        push @cand, [ abs($pmid - ($t->{start} + $t->{end}) / 2), $p, $t ];
+        next unless $t->{strand} eq $p->{strand};
+        my $d = abs($pmid - ($t->{start} + $t->{end}) / 2);
+        my $overlap = $p->{start} <= $t->{end} && $t->{start} <= $p->{end};
+        next unless $overlap || $d <= $max_dist;
+        push @cand, [ $d, $p, $t ];
     }
 }
 for my $c (sort { $a->[0] <=> $b->[0]
@@ -122,9 +136,21 @@ for my $c (sort { $a->[0] <=> $b->[0]
 }
 @spurious = grep { !$_->{matched} } @$pred;
 my @missing = grep { !$_->{matched} } @$truth;
+# A spurious call that overlaps an unmatched truth row of the same gene on the
+# other strand is a strand error, not an invention: flag it so the detail table
+# and the "strand errors" line keep saying so.
+my $strand_err = 0;
+for my $p (@spurious) {
+    my $cands = $by_norm{ $p->{norm} } || $by_base{ $p->{base} } or next;
+    for my $t (@$cands) {
+        next if $t->{matched} || $t->{strand} eq $p->{strand};
+        next unless $p->{start} <= $t->{end} && $t->{start} <= $p->{end};
+        $p->{wrong_strand} = 1; $strand_err++; last;
+    }
+}
 
 # Offsets in transcription orientation: negative = predicted boundary lies upstream.
-my (@d5, @d3, $exact_both, $exact5, $exact3, $strand_err, $inconsistent);
+my (@d5, @d3, $exact_both, $exact5, $exact3, $inconsistent);
 my @detail;
 for my $pr (@pairs) {
     my ($p, $t) = @$pr;
@@ -140,7 +166,6 @@ for my $pr (@pairs) {
     $exact5++ if $o5 == 0;
     $exact3++ if $o3 == 0;
     $exact_both++ if $o5 == 0 && $o3 == 0;
-    $strand_err++ if $p->{strand} ne $t->{strand};
     # A gene whose two IR copies are annotated at different lengths in the source
     # record cannot be satisfied on both: one reference sequence, two extents.
     $inconsistent++ if ($o5 || $o3) && $t->{flags} =~ /inconsistent_copies/;
@@ -208,7 +233,7 @@ if ($detail_file) {
     print $dh join("\t", qw(gene type strand truth_start truth_end pred_start pred_end pred_strand off5 off3 flags)), "\n";
     print $dh join("\t", @$_), "\n" for sort { abs($b->[8]) + abs($b->[9]) <=> abs($a->[8]) + abs($a->[9]) } @detail;
     print $dh join("\t", $_->{name}, $_->{type}, $_->{strand}, $_->{start}, $_->{end}, "", "", "", "MISSING", "", $_->{flags}), "\n" for @missing;
-    print $dh join("\t", $_->{name}, "NA", "", "", "", $_->{start}, $_->{end}, $_->{strand}, "SPURIOUS", "", ""), "\n" for @spurious;
+    print $dh join("\t", $_->{name}, "NA", "", "", "", $_->{start}, $_->{end}, $_->{strand}, "SPURIOUS", "", $_->{wrong_strand} ? "wrong_strand" : ""), "\n" for @spurious;
     close $dh;
     print "\ndetail written to $detail_file (worst offsets first)\n";
 }

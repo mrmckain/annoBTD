@@ -83,7 +83,7 @@ trnL_exon2	68177	68226	-	tRNA	-
 trnL_exon1	68715	68749	-	tRNA	-
 trnT	69176	69246	+	tRNA	-
 rps4	69528	70124	+	CDS	-
-trnS	70440	70526	+	tRNA	-
+trnS	70440	70526	-	tRNA	-
 ycf3_exon1	71272	71395	+	CDS	-
 ycf3_exon2	72122	72351	+	CDS	-
 ycf3_exon3	73047	73202	+	CDS	-

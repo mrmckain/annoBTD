@@ -8,7 +8,7 @@ rps16_exon1	6149	6188	-	CDS	-
 trnQ	6616	6687	-	tRNA	-
 psbK	7017	7202	+	CDS	-
 psbI	7583	7693	+	CDS	-
-trnS	7785	7872	+	tRNA	-
+trnS	7785	7872	-	tRNA	-
 trnG_exon1	8646	8668	+	tRNA	-
 trnG_exon2	9384	9431	+	tRNA	-
 trnR	9590	9661	+	tRNA	-
