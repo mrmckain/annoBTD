@@ -1,0 +1,38 @@
+# tRNA identities (letter-anticodon) seen in the curated truth genomes, plus the
+# documented bryophyte/gymnosperm plastid tRNAs trnR-CCG, trnL-GAG, trnP-GGG. ("trnS-CGA" and
+# "trnT-CGU" are ARAGORN mislabels of trnG-UCC and trnI-GAU, not real identities.)
+# post_filter_annotation.pl drops a tRNA call whose identity is absent here when only
+# one guide supports it.
+trnA-UGC
+trnC-GCA
+trnD-GUC
+trnE-UUC
+trnF-GAA
+trnG-GCC
+trnG-UCC
+trnH-GUG
+trnI-CAU
+trnI-GAU
+trnK-UUU
+trnL-CAA
+trnL-GAG
+trnL-UAA
+trnL-UAG
+trnM-CAU
+trnN-GUU
+trnP-GGG
+trnP-UGG
+trnQ-UUG
+trnR-ACG
+trnR-CCG
+trnR-UCU
+trnS-GCU
+trnS-GGA
+trnS-UGA
+trnT-GGU
+trnT-UGU
+trnV-GAC
+trnV-UAC
+trnW-CCA
+trnY-GUA
+trnfM-CAU
