@@ -3,12 +3,12 @@
 #
 # Everything the regression harness and the annotation pipeline read besides the
 # scripts themselves is derived from two sources: the taxonomy table of every
-# complete plastome in GenBank (../../taxonomy_all.tsv) and the flat-file cache
+# complete plastome in GenBank (refdb/taxonomy_all.tsv) and the flat-file cache
 # (gb_cache/, one <accession.version>.gb per record). This script re-derives the
 # rest, in dependency order, into a staging directory, and installs the staged
-# set over the live one only when asked. The live files keep plain names; the
-# previous set moves to archive/refs_<date>/ so a regression can be rerun
-# against either.
+# set into the reference database directory (../refdb, or ANNOBTD_REFDB) only when
+# asked. The previous set moves to archive/refs_<date>/ so a regression can be rerun
+# against either. ../fetch_refdb.sh fills the same directory from a published bundle.
 #
 # USAGE: ./refresh_references.sh [--offline] [--stage S[,S...]] [--force]
 #                                [--workers N] [--install] [--stage-dir DIR]
@@ -25,12 +25,12 @@
 #                  (README, "Current reference numbers").
 #
 # STAGES and what each produces:
-#   taxonomy   build_taxonomy_all.pl        new rows appended to ../../taxonomy_all.tsv
+#   taxonomy   build_taxonomy_all.pl        new rows appended to refdb/taxonomy_all.tsv
 #                                           (existing rows, including assigned lineages, kept)
 #   mine       mine_genbank_batch.sh        new flat files into gb_cache/ (resumable)
 #   meta       extract_record_meta.pl       record_meta.tsv     submitter group + RefSeq source per record
 #   lengths    extract_guide_lengths.pl     all_lengths.tsv     gene and exon lengths per record
-#   sketches   build_reference_sketches.pl  ../reference_sketches_full.tsv, appended IN PLACE
+#   sketches   build_reference_sketches.pl  refdb/reference_sketches_full.tsv, appended IN PLACE
 #                                           for accessions not yet sketched (N workers)
 #   taxcheck   check_taxonomy_consistency.pl taxonomy_consistency.tsv  MISLABELED / REVIEW / ASSIGNABLE
 #   assign     assign_lineages.pl           lineage_assignments.tsv; ASSIGNABLE lineages written
@@ -55,10 +55,10 @@ set -uo pipefail
 cd "$(dirname "$0")"
 TEST="$(pwd)"
 ANNOBTD_DIR="$(cd .. && pwd)"
-TOP="$(cd ../.. && pwd)"
-TAX="$TOP/taxonomy_all.tsv"
+REFDB="${ANNOBTD_REFDB:-$ANNOBTD_DIR/refdb}"; mkdir -p "$REFDB"
+TAX="$REFDB/taxonomy_all.tsv"
 CACHE="$TEST/gb_cache"
-SKETCH="$ANNOBTD_DIR/reference_sketches_full.tsv"
+SKETCH="$REFDB/reference_sketches_full.tsv"
 STAGE="$TEST/refresh.new"
 ARCHIVE="$TEST/archive"
 WORKERS=8
@@ -161,7 +161,7 @@ fi
 
 # ---- assign: proposed lineages for records that declare none -----------------
 if wanted assign; then
-    CHK="$STAGE/taxonomy_consistency.tsv"; [ -s "$CHK" ] || CHK="$TEST/taxonomy_consistency.tsv"
+    CHK="$STAGE/taxonomy_consistency.tsv"; [ -s "$CHK" ] || CHK="$REFDB/taxonomy_consistency.tsv"
     # only records whose taxonomy row still says NA are pending (a rerun after an
     # install would otherwise re-apply the same assignments)
     nas=$(awk -F'\t' 'NR==FNR{ if (FNR>1 && $11=="ASSIGNABLE") a[$1]=1; next } FNR>1 && ($1 in a) && $6=="NA"' "$CHK" "$TAX" | wc -l | tr -d ' ')
@@ -172,7 +172,7 @@ if wanted assign; then
         perl "$ANNOBTD_DIR/assign_lineages.pl" "$CHK" "$TAX" "$SKETCH" "$STAGE/lineage_assignments.new.tsv" 2>&1 | tee -a "$LOG" >&2 || die "assign failed"
         # the audit table is cumulative: earlier assignments stay on record
         { head -1 "$STAGE/lineage_assignments.new.tsv"
-          { [ -s "$TEST/lineage_assignments.tsv" ] && tail -n +2 "$TEST/lineage_assignments.tsv"; tail -n +2 "$STAGE/lineage_assignments.new.tsv"; } | awk -F'\t' '!s[$1]++' | sort
+          { [ -s "$REFDB/lineage_assignments.tsv" ] && tail -n +2 "$REFDB/lineage_assignments.tsv"; tail -n +2 "$STAGE/lineage_assignments.new.tsv"; } | awk -F'\t' '!s[$1]++' | sort
         } > "$STAGE/lineage_assignments.tsv"
         say "[assign] audit table $(rows "$STAGE/lineage_assignments.tsv") rows (backups in $B)"
     fi
@@ -180,9 +180,9 @@ fi
 
 # ---- consensus ----------------------------------------------------------------
 if wanted consensus; then
-    META="$STAGE/record_meta.tsv"; [ -s "$META" ] || META="$TEST/record_meta.tsv"
-    LENS="$STAGE/all_lengths.tsv"; [ -s "$LENS" ] || LENS="$TEST/all_lengths.tsv"
-    CHK="$STAGE/taxonomy_consistency.tsv"; [ -s "$CHK" ] || CHK="$TEST/taxonomy_consistency.tsv"
+    META="$STAGE/record_meta.tsv"; [ -s "$META" ] || META="$REFDB/record_meta.tsv"
+    LENS="$STAGE/all_lengths.tsv"; [ -s "$LENS" ] || LENS="$REFDB/all_lengths.tsv"
+    CHK="$STAGE/taxonomy_consistency.tsv"; [ -s "$CHK" ] || CHK="$REFDB/taxonomy_consistency.tsv"
     if current "$STAGE/species_units.tsv" "$META" "$LENS" "$CHK" "$ANNOBTD_DIR/build_species_consensus.pl"; then say "[consensus] current, skipped"; else
         say "[consensus] build_species_consensus.pl ($META, $LENS, excluding MISLABELED from $CHK)"
         perl "$ANNOBTD_DIR/build_species_consensus.pl" "$META" "$LENS" "$STAGE/species" --exclude "$CHK" 2>&1 | tee -a "$LOG" >&2 || die "consensus failed"
@@ -192,7 +192,7 @@ fi
 
 # ---- expect -------------------------------------------------------------------
 if wanted expect; then
-    SL="$STAGE/species_lengths.tsv"; [ -s "$SL" ] || SL="$TEST/species_lengths.tsv"
+    SL="$STAGE/species_lengths.tsv"; [ -s "$SL" ] || SL="$REFDB/species_lengths.tsv"
     if current "$STAGE/gene_expect.tsv" "$SL" "$TAX" "$ANNOBTD_DIR/build_expect_from_lengths.pl"; then say "[expect] current, skipped"; else
         say "[expect] build_expect_from_lengths.pl on $SL"
         perl "$ANNOBTD_DIR/build_expect_from_lengths.pl" "$SL" "$TAX" "$STAGE/gene_expect.tsv" "$STAGE/gene_profile.tsv" 2>&1 | tee -a "$LOG" >&2 || die "expect failed"
@@ -202,7 +202,7 @@ fi
 
 # ---- counts -------------------------------------------------------------------
 if wanted counts; then
-    SU="$STAGE/species_units.tsv"; [ -s "$SU" ] || SU="$TEST/species_units.tsv"
+    SU="$STAGE/species_units.tsv"; [ -s "$SU" ] || SU="$REFDB/species_units.tsv"
     if current "$STAGE/lineage_species_counts.tsv" "$SU" "$TAX"; then say "[counts] current, skipped"; else
         say "[counts] species per family and order from the representatives in $SU"
         awk -F'\t' 'NR==FNR{ if (FNR>1 && $8==1) r[$1]=1; next }
@@ -217,13 +217,13 @@ INSTALLABLE="record_meta.tsv all_lengths.tsv taxonomy_consistency.tsv lineage_as
 say "staged vs installed:"
 for f in $INSTALLABLE; do
     [ -s "$STAGE/$f" ] || continue
-    if [ -s "$TEST/$f" ]; then
-        if cmp -s "$STAGE/$f" "$TEST/$f"; then st="identical"; else st="differs ($(rows "$TEST/$f") -> $(rows "$STAGE/$f") rows)"; fi
+    if [ -s "$REFDB/$f" ]; then
+        if cmp -s "$STAGE/$f" "$REFDB/$f"; then st="identical"; else st="differs ($(rows "$REFDB/$f") -> $(rows "$STAGE/$f") rows)"; fi
     else st="new"; fi
     say "  $f: $st"
 done
-if [ -s "$STAGE/gene_expect.tsv" ] && [ -s "$TEST/gene_expect.tsv" ]; then
-    say "  gene_expect settled cells whose median changed: $(awk -F'\t' 'NR==FNR{ if(FNR>1 && $6>=0.9) m[$1"\t"$2"\t"$3]=$5; next } FNR>1 && $6>=0.9 && ($1"\t"$2"\t"$3 in m) && m[$1"\t"$2"\t"$3]!=$5' "$TEST/gene_expect.tsv" "$STAGE/gene_expect.tsv" | wc -l | tr -d ' ')"
+if [ -s "$STAGE/gene_expect.tsv" ] && [ -s "$REFDB/gene_expect.tsv" ]; then
+    say "  gene_expect settled cells whose median changed: $(awk -F'\t' 'NR==FNR{ if(FNR>1 && $6>=0.9) m[$1"\t"$2"\t"$3]=$5; next } FNR>1 && $6>=0.9 && ($1"\t"$2"\t"$3 in m) && m[$1"\t"$2"\t"$3]!=$5' "$REFDB/gene_expect.tsv" "$STAGE/gene_expect.tsv" | wc -l | tr -d ' ')"
 fi
 
 # ---- install ------------------------------------------------------------------
@@ -232,8 +232,8 @@ if [ -n "$INSTALL" ]; then
     n=0
     for f in $INSTALLABLE; do
         [ -s "$STAGE/$f" ] || continue
-        [ -e "$TEST/$f" ] && mv "$TEST/$f" "$B/$f"
-        mv "$STAGE/$f" "$TEST/$f"; n=$((n+1))
+        [ -e "$REFDB/$f" ] && mv "$REFDB/$f" "$B/$f"
+        mv "$STAGE/$f" "$REFDB/$f"; n=$((n+1))
     done
     say "installed $n files; previous set in $B. Rerun the regression arms (README: Current reference numbers) before relying on them."
 fi
