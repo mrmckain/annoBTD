@@ -1,0 +1,8 @@
+genome	feature	coords	change	evidence
+Arabidopsis_thaliana	trnS-GCU	7785..7872	strand + -> -	ARAGORN calls the gene on -, as do all other 50 genomes; record NC_000932 has +
+Pinus_thunbergii	trnS-GGA	70440..70526	strand + -> -	ARAGORN calls the gene on -; record D17510 has +
+Marchantia_paleacea	trnM	42156..42229	renamed trnfM	CAU anticodon (ARAGORN), sits beside rps14 where trnfM-CAU always is, 96% identical to trnfM-CAU of other genomes; the true trnM-CAU is at 53800 beside atpE
+Oryza_sativa	trnM	12839..12912	renamed trnfM	100% identical to grass trnfM-CAU (Sorghum 13876, same locus beside trnG); the true trnM-CAU is at 51218 beside atpE
+Sorghum_bicolor	trnM-CAU	16758..16831	renamed trnT-GGU	ARAGORN calls tRNA-Thr (GGU) here, 100% identical to grass trnT-GGU; the true trnM-CAU is at 54788 beside atpE
+Sorghum_bicolor	trnT-GGU	16829..16893	removed	65 nt, no tRNA structure (ARAGORN finds nothing), overlaps the real trnT-GGU by 3 nt: a record artefact
+Sorghum_bicolor	trnT-GGU	16758..16831	boundaries -> 16759..16830	recurate_trna.pl with the trnT-GGU convention (the row was recurated as trnM-CAU before its rename); 72 nt like every other trnT-GGU

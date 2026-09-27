@@ -1,0 +1,9 @@
+# spliced tRNA exon lengths (exon1/exon2, transcript order): the mode across the classic
+# NCBI-reviewed records (Arabidopsis, Daucus, Nicotiana, Spinacia, Zea, Sorghum, Oryza), whose
+# pairs sum to the mature lengths (trnA 73, trnI 72, trnK 72, trnG 71, trnL 85, trnV 74).
+trnA-UGC	38/35	12 of 13
+trnG-UCC	23/48	3 of 5
+trnI-GAU	37/35	10 of 14
+trnK-UUU	37/35	5 of 7
+trnL-UAA	35/50	6 of 7
+trnV-UAC	39/35	3 of 7
