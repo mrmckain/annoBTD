@@ -52,17 +52,18 @@ another is visible:
 ### Derived reference tables
 
 Everything in this directory that is not a script or a truth table is derived from
-two sources: `../../taxonomy_all.tsv` (every complete plastome in GenBank with
-family and order) and `gb_cache/` (its flat files, one per record). The harness
-reads the derived tables by these plain names; `./refresh_references.sh` rebuilds
-them into `refresh.new/` and `--install` swaps them in, moving the previous set to
-`archive/refs_<date>/`.
+two sources: `../refdb/taxonomy_all.tsv` (every complete plastome in GenBank with
+family and order) and `gb_cache/` (its flat files, one per record). They live in
+`../refdb/` (`ANNOBTD_REFDB` to point elsewhere), filled either by
+`../fetch_refdb.sh` from the published bundle or by `./refresh_references.sh`,
+which rebuilds them into `refresh.new/` and with `--install` swaps them in, moving
+the previous set to `archive/refs_<date>/`.
 
 | table | built by | what it holds |
 |---|---|---|
 | `record_meta.tsv` | `extract_record_meta.pl` | submitter group (last author + institution) and RefSeq source per record |
 | `all_lengths.tsv` | `extract_guide_lengths.pl` | gene and exon lengths of every cached record (names normalised by `gene_synonyms.tsv`) |
-| `../reference_sketches_full.tsv` | `build_reference_sketches.pl --gb-dir` | MinHash sketch of every cached genome: the full guide database |
+| `../refdb/reference_sketches_full.tsv` | `build_reference_sketches.pl --gb-dir` | MinHash sketch of every cached genome: the full guide database |
 | `taxonomy_consistency.tsv` | `check_taxonomy_consistency.pl` | sketch-versus-declared-lineage verdicts; MISLABELED records never guide or vote |
 | `lineage_assignments.tsv` | `assign_lineages.pl` | lineages assigned to records that declared none (audit trail) |
 | `species_units.tsv`, `species_lengths.tsv`, `species_consensus.tsv` | `build_species_consensus.pl` | one vote per submitter group, one form per species; the representative record of each species |
@@ -195,9 +196,9 @@ annotation, all tRNA strands and identities the sequence contradicts).
 | arm | command | recall / precision | both exact |
 |---|---|---|---|
 | leave-one-out, guides = the other 8 test genomes | `./run_regression.sh --outdir results_loo_st` | 92.3 / 97.7 | 1170 |
-| curated DB (`../reference_sketches.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches.tsv --nguides 8 --outdir results_db8_oldnew_st` | 93.8 / 96.5 | 1201 |
-| full DB (`../reference_sketches_full.tsv`), 8 guides | `./run_regression.sh --db ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_full_st` | 98.1 / 95.3 | 1270 |
-| hybrid: curated DB when it has 3 same-family guides, else full DB | `./run_regression.sh --db ../reference_sketches.tsv --db2 ../reference_sketches_full.tsv --nguides 8 --outdir results_db8_hybrid_st` | 98.8 / 95.9 | 1284 |
+| curated DB (`../refdb/reference_sketches.tsv`), 8 guides | `./run_regression.sh --db ../refdb/reference_sketches.tsv --nguides 8 --outdir results_db8_oldnew_st` | 93.8 / 96.5 | 1201 |
+| full DB (`../refdb/reference_sketches_full.tsv`), 8 guides | `./run_regression.sh --db ../refdb/reference_sketches_full.tsv --nguides 8 --outdir results_db8_full_st` | 98.1 / 95.3 | 1270 |
+| hybrid: curated DB when it has 3 same-family guides, else full DB | `./run_regression.sh --db ../refdb/reference_sketches.tsv --db2 ../refdb/reference_sketches_full.tsv --nguides 8 --outdir results_db8_hybrid_st` | 98.8 / 95.9 | 1284 |
 | full DB, no guide from the target's genus | add `--exclude-genus` (`results_db8_full_nogenus_st`) | 97.7 / 95.4 | 1251 |
 | hybrid, no guide from the target's genus | add `--exclude-genus` (`results_db8_hybrid_nogenus_st`) | 98.3 / 95.9 | 1262 |
 
@@ -346,9 +347,9 @@ counts on the reverse branches, taking the algorithmic error count from 1 to 10.
 
 ## The reference database
 
-Two sketch databases exist. `../reference_sketches.tsv` is the curated pool:
+Two sketch databases exist. `../refdb/reference_sketches.tsv` is the curated pool:
 `taxonomy_cache.tsv` (7,912 structurally verified GenBank plastomes with tribe /
-subfamily / family / order). `../reference_sketches_full.tsv` is every complete
+subfamily / family / order). `../refdb/reference_sketches_full.tsv` is every complete
 plastome in GenBank (67,461 records at the last refresh), built from the flat-file
 cache by `refresh_references.sh`; guides from it pass the lineage-consistency,
 species-collapse and taxonomy-consistency filters described in `run_regression.sh`.

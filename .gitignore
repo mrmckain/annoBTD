@@ -5,24 +5,14 @@
 #   cc -O2 -w -o bin/aragorn third_party/aragorn/aragorn1.2.41.c -lm
 bin/
 
-# sketch databases: build_reference_sketches.pl (curated pool) and
-# test/refresh_references.sh (every cached GenBank plastome); 0.1-1.2 GB each
-reference_sketches*.tsv
-reference_sketches*.tsv.pre_assign
+# the reference database: sketch databases, taxonomy table and derived profile
+# tables, 1.5 GB; filled by ./fetch_refdb.sh (published bundle) or rebuilt by
+# test/refresh_references.sh --install
+refdb/
 
-# regression harness: the GenBank flat-file cache, result directories, the
-# archive of superseded runs, and the derived reference tables (1-170 MB each),
-# all rebuilt by test/refresh_references.sh. The small curated tables
-# (trna_*.tsv, lineage_species_counts.tsv, lineage_assignments.tsv) are tracked.
+# regression harness: the GenBank flat-file cache, result directories and the
+# archive of superseded runs
 test/gb_cache/
 test/archive/
 test/results*/
 test/refresh.new/
-test/all_lengths.tsv
-test/record_meta.tsv
-test/species_consensus.tsv
-test/species_lengths.tsv
-test/species_units.tsv
-test/gene_expect.tsv
-test/gene_profile.tsv
-test/taxonomy_consistency.tsv
