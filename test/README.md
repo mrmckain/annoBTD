@@ -69,8 +69,8 @@ the previous set to `archive/refs_<date>/`.
 | `species_units.tsv`, `species_lengths.tsv`, `species_consensus.tsv` | `build_species_consensus.pl` | one vote per submitter group, one form per species; the representative record of each species |
 | `gene_expect.tsv`, `gene_profile.tsv` | `build_expect_from_lengths.pl` | species-voted length expectations by genus / family / order / all |
 | `lineage_species_counts.tsv` | `refresh_references.sh` | species per family and order, the presence prior's denominator |
-| `trna_window_residuals.tsv`, `trna_exon_lengths.tsv` | curated by hand | tRNA boundary convention used by the ARAGORN refinement and `../recurate_trna.pl` |
-| `../trna_library.fasta` | `../build_trna_library.pl` over the 51 truth sets | one sequence per tRNA identity per curated genome; the post filter names every tRNA call by its best hit, leaving the target's own entries out |
+| `trna_window_residuals.tsv`, `trna_exon_lengths.tsv` | curated by hand | tRNA boundary convention used by the ARAGORN refinement and `../refdb_build/recurate_trna.pl` |
+| `../tables/trna_library.fasta` | `../refdb_build/build_trna_library.pl` over the 51 truth sets | one sequence per tRNA identity per curated genome; the post filter names every tRNA call by its best hit, leaving the target's own entries out |
 | `truth_curation.tsv` | by hand | every edit made to a truth table beyond what its GenBank record says, with the evidence (tRNA strands and identities the sequence contradicts) |
 
 Superseded versions of these tables, the record-voted profile pipeline's
@@ -188,7 +188,7 @@ any remaining algorithmic change.
 
 The arms below are the ones every later change is measured against. All nine
 truth tables (and the 12 Asparagaceae and 30 grass tables in `asp/` and
-`curated/`) sit on one tRNA convention (`../recurate_trna.pl`, ARAGORN 1.2.41).
+`curated/`) sit on one tRNA convention (`../refdb_build/recurate_trna.pl`, ARAGORN 1.2.41).
 "both exact" counts features with both boundaries correct, out of 1,330 truth
 features (`truth_curation.tsv` lists the six edits made to the records' own
 annotation, all tRNA strands and identities the sequence contradicts).
@@ -358,12 +358,12 @@ and the full one otherwise. Three scripts use a pool:
 
 ```bash
 # once: sketch the pool (resumable, ~1 accession/sec against NCBI's rate limit)
-perl build_reference_sketches.pl taxonomy_cache.tsv reference_sketches.tsv
+perl ../refdb_build/build_reference_sketches.pl taxonomy_cache.tsv reference_sketches.tsv
 
 # per genome: rank the pool and fetch the closest guides
-perl select_guides.pl target.fsa reference_sketches.tsv -n 3 --one-per-genus > ranking.tsv
-guides=$(./fetch_guides.sh ranking.tsv ./sequenceFiles ./files)
-./run_annotation_pipeline.sh target.fsa "$guides" MySpecies
+perl ../guides/select_guides.pl target.fsa reference_sketches.tsv -n 3 --one-per-genus > ranking.tsv
+guides=$(../guides/fetch_guides.sh ranking.tsv ./sequenceFiles ./files)
+../pipeline/run_annotation_pipeline.sh target.fsa "$guides" MySpecies
 ```
 
 Holding exact k-mer sets for ~8,000 genomes would mean ~1.2 billion k-mers, so
@@ -565,11 +565,11 @@ difference under about a point was indistinguishable from run-to-run noise.
 
 ## Debugging a specific coordinate
 
-`match_orfs_to_blast_v2.2.pl` will dump the intermediate values behind every CDS
+`pipeline/match_orfs_to_blast_v2.2.pl` will dump the intermediate values behind every CDS
 coordinate it emits:
 
 ```bash
-ANNOBTD_DEBUG_COORDS=/tmp/coords.tsv ./run_annotation_pipeline.sh ...
+ANNOBTD_DEBUG_COORDS=/tmp/coords.tsv ../pipeline/run_annotation_pipeline.sh ...
 ```
 
 Each row gives the sub and branch that fired, the ORF bounds, the reading frame,
@@ -613,7 +613,7 @@ perl unit_boundary.pl
 
 Exercises `match_start`, `alt_start`, `match_end`, `translate`,
 `best_match_frames` and `extend_rna_hit` directly. The subs are lifted out of
-`match_orfs_to_blast_v2.2.pl` at run time, so there is no duplicated copy to
+`pipeline/match_orfs_to_blast_v2.2.pl` at run time, so there is no duplicated copy to
 drift.
 
 All 33 currently pass. A test may be marked `KNOWN-BAD` to pin a defect that is

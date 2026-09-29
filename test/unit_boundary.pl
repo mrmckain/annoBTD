@@ -13,7 +13,7 @@ use warnings;
 # Tests marked KNOWN-BAD document defects found in the diagnostic. They are expected
 # to fail today; when the boundary rewrite lands, flip them to expect the right answer.
 
-my $SRC = "../match_orfs_to_blast_v2.2.pl";
+my $SRC = "../pipeline/match_orfs_to_blast_v2.2.pl";
 open my $fh, "<", $SRC or die "Cannot open $SRC: $!";
 my $src = do { local $/; <$fh> };
 close $fh;

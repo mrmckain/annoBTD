@@ -220,10 +220,10 @@ if ($o{'trna-library'} && -s $o{'trna-library'} && $seq && !$o{'no-rna-dedupe'})
 
 # --- 1b. tRNA identities no plastid carries -------------------------------------
 # A tRNA name whose letter+anticodon appears in none of the curated genomes
-# (annoBTD/plastid_trna_names.txt) and that only one guide supports is a guide's
+# (tables/plastid_trna_names.txt) and that only one guide supports is a guide's
 # mistake (a "trnT-CGU" from one mislabeled record), not a discovery.
 {
-    my $list = (grep { -s $_ } map { "$_/plastid_trna_names.txt" } grep { defined } $ENV{ANNOBTD_DIR}, $FindBin::Bin)[0];
+    my $list = (grep { -s $_ } map { "$_/plastid_trna_names.txt" } grep { defined } ($ENV{ANNOBTD_DIR} ? "$ENV{ANNOBTD_DIR}/tables" : undef), "$FindBin::Bin/../tables", $FindBin::Bin)[0];
     if ($list && !$o{'no-rna-dedupe'}) { my %ok; open my $fh, "<", $list or die; while (<$fh>) { chomp; $ok{$_} = 1 if /\S/ } close $fh;
         my %support; if ($o{'guides-dir'} && opendir(my $d, $o{'guides-dir'})) {
             for my $g (grep { !/^\./ } readdir $d) { my %seen; open my $gh, "<", "$o{'guides-dir'}/$g" or next;

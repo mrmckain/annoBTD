@@ -8,14 +8,14 @@
 # removes reference divergence entirely: the pipeline is given the exact answer,
 # so any error is the algorithm's own. It is the sharpest diagnostic here.
 #
-# Needs BLAST+ on PATH or BLAST_BIN set (see ../run_multiblast.sh).
+# Needs BLAST+ on PATH or BLAST_BIN set (see ../pipeline/run_multiblast.sh).
 #
 # Reads the reference database in ../refdb (ANNOBTD_REFDB to point elsewhere;
 # filled by ../fetch_refdb.sh or built by ./refresh_references.sh --install):
 # gene_expect.tsv, species_units.tsv, species_lengths.tsv, lineage_species_counts.tsv,
 # taxonomy_consistency.tsv, all_lengths.tsv, taxonomy_all.tsv, and the guide
 # databases reference_sketches.tsv (curated) and reference_sketches_full.tsv (every
-# cached GenBank plastome). Guides are chosen by ../choose_guides.sh.
+# cached GenBank plastome). Guides are chosen by ../guides/choose_guides.sh.
 # Results land in <outdir>/ : one .compare.txt summary and one .detail.tsv per genome,
 # plus summary.tsv collecting the headline numbers across the whole set.
 
@@ -102,7 +102,7 @@ CONFIG="$OUTDIR/run_config.txt"
     done
     echo
     echo "# md5 of the scripts on the annotation path"
-    for f in "$ANNOBTD_DIR"/*.pl "$ANNOBTD_DIR"/*.sh; do
+    for f in "$ANNOBTD_DIR"/pipeline/* "$ANNOBTD_DIR"/guides/* "$ANNOBTD_DIR"/tables/* "$ANNOBTD_DIR"/annobtd.sh; do
         [ -f "$f" ] || continue
         echo "$(basename "$f")	$(md5 -q "$f" 2>/dev/null || md5sum "$f" | cut -d" " -f1)"
     done
@@ -150,12 +150,12 @@ for target in "${GENOMES[@]}"; do
         # choose_guides.sh applies the lineage-consistency, species-collapse and
         # taxonomy-check filters and the hybrid rule; see its header.
         tacc_full=$(grep -m1 '^>' "$DATA/$target.fsa" | sed 's/^>\([^ ]*\).*/\1/')
-        hyb=$("$ANNOBTD_DIR/choose_guides.sh" "$DATA/$target.fsa" "$WORK" --db "$DB" ${DB2:+--db2 "$DB2"} -n "$NGUIDES" \
+        hyb=$("$ANNOBTD_DIR/guides/choose_guides.sh" "$DATA/$target.fsa" "$WORK" --db "$DB" ${DB2:+--db2 "$DB2"} -n "$NGUIDES" \
                 --family "$ANNOBTD_FAMILY" --order "$ANNOBTD_ORDER" --genus "$ANNOBTD_GENUS" --exclude "$tacc_full" \
                 ${EXGENUS:+--exclude-genus} $( [ -z "$GENUSOPT" ] && echo --allow-congeners ) --refdb "$REFDB") \
             || { echo "  FAILED: no guides selected from $DB" >&2; continue; }
         [ -n "$hyb" ] && printf "hybrid\t%s\t%s\n" "$target" "${hyb#hybrid	}" >> "$CONFIG"
-        guides=$("$ANNOBTD_DIR/fetch_guides.sh" "$WORK/ranking.tsv" \
+        guides=$("$ANNOBTD_DIR/guides/fetch_guides.sh" "$WORK/ranking.tsv" \
                  "$WORK/sequenceFiles" "$WORK/files" "$(pwd)/gb_cache" 2>>"$WORK/guides.log")
         if [ -z "$guides" ]; then
             echo "  FAILED: no guides selected from $DB" >&2
@@ -182,7 +182,7 @@ for target in "${GENOMES[@]}"; do
     start=$(date +%s)
     ( cd "$WORK" && \
       ANNOBTD_DIR="$ANNOBTD_DIR" SEQDIR=./sequenceFiles FILEDIR=./files \
-      "$ANNOBTD_DIR/run_annotation_pipeline.sh" target.fsa "$guides" "$target" \
+      "$ANNOBTD_DIR/pipeline/run_annotation_pipeline.sh" target.fsa "$guides" "$target" \
     ) > "$WORK/pipeline.log" 2>&1
     rc=$?
     elapsed=$(( $(date +%s) - start ))

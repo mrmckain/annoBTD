@@ -25,7 +25,7 @@ CACHE="${4:-./gb_cache}"
 
 # gb_to_truth.pl converts a GenBank flatfile to the annotation format used here.
 GB2TRUTH=""
-for c in "$HERE/gb_to_truth.pl" "$HERE/test/gb_to_truth.pl"; do
+for c in "$HERE/../test/gb_to_truth.pl" "$HERE/gb_to_truth.pl"; do
     [ -f "$c" ] && GB2TRUTH="$c" && break
 done
 [ -n "$GB2TRUTH" ] || { echo "ERROR: cannot find gb_to_truth.pl" >&2; exit 1; }
