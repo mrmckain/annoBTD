@@ -158,7 +158,7 @@ ANNOTATION="${SP}_VERDANT_cleaned_annotation.txt"
 # to skip, ANNOBTD_TRNA_LIBRARY_EXCLUDE=name,acc,... to leave the genome's own entries out).
 if [ -z "${ANNOBTD_SKIP_POSTFILTER:-}" ] && [ -s "$ANNOTATION" ]; then
     perl "$ANNOBTD_DIR/pipeline/post_filter_annotation.pl" "$PLASTOME" "$ANNOTATION" \
-        --guides-dir "${FILEDIR:-./files}" \
+        --guides-dir "${FILEDIR:-./files}" --guide-seqs "$SEQDIR" \
         ${ANNOBTD_PROFILE:+--profile "$ANNOBTD_PROFILE"} ${ANNOBTD_LINEAGE_COUNTS:+--lineage-counts "$ANNOBTD_LINEAGE_COUNTS"} \
         --family "${ANNOBTD_FAMILY:-NA}" --order "${ANNOBTD_ORDER:-NA}" --genus "${ANNOBTD_GENUS:-NA}" --min-presence "${ANNOBTD_MIN_PRESENCE:-0.5}" \
         $( [ -z "${ANNOBTD_NO_ARAGORN:-}" ] && [ -n "$ARAGORN_BIN" ] && [ -x "$ARAGORN_BIN" ] && printf -- "--aragorn %s --trna-convention %s" "$ARAGORN_BIN" "${ANNOBTD_TRNA_CONVENTION:-$ANNOBTD_DIR/tables/trna_window_residuals.tsv}" ) \

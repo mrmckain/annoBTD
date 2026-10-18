@@ -119,6 +119,31 @@ codon up), Spinacia ndhD (ATC), accD, psbH and rpl22, Marchantia ndhJ. Lowering
 the settled-cell consensus from 0.9 to 0.85 or 0.8 was measured and lost (1278
 and 1269 against 1280 on the hybrid arm at that stage).
 
+### Genes the ORF stage loses, intact genes the prior would drop, starts on non-initiators
+
+Three rules came out of annotating 91 new Agavoideae plastomes (October 2026):
+
+- **Rescue.** `annotate_plastome.pl` drops an ORF that a longer ORF in another frame
+  covers by 90% unless it is at least 60% as long, so a 105 nt psbM inside a 285 nt
+  open frame never reaches BLAST. The post filter now searches directly, with
+  tblastn, for every canonical CDS (`tables/plastid_cds_names.txt`) that at least half
+  the guides carry and the annotation lacks, and adds it when the hit is full length,
+  the ORF intact and within 10% of the guide's length (`RESCUE` lines).
+- **Intact-ORF exemption.** A canonical gene that is an intact ORF of the guides' and
+  the lineage's length is kept against the presence prior when its share is at least
+  0.25 (Asparagaceae infA: 0.47 of species, 4 of 8 guides, reads through in Agave).
+  Without the name test the rule kept ycf15, ycf68 and orf77 (+18 spurious); without
+  the share floor it kept the 192 nt grass "ycf1" fragment.
+- **Start fix.** A CDS that starts on a codon that cannot initiate (Nolina atpB on TAC,
+  cemA on AAA copied from a record) moves to the in-frame ATG or GTG within 30 codons
+  that gives the settled expectation, else the guides' modal length, else the nearest
+  upstream one (`START_FIX` lines).
+
+All three leave the nine-genome benchmark unchanged (1284 both-exact, 56 spurious).
+`tools/verdant_edit.pl` applies hand curation (rename, add, delete, move) to an
+annotation table and rebuilds its spacer rows; pseudogenes are marked with the
+suffix `_pseudogene`.
+
 ## Reading the output
 
 `results/summary.tsv` has one row per genome. The columns that matter for
