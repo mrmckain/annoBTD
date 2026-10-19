@@ -404,12 +404,19 @@ if ($seq) {
             my ($ea, $eb) = ($settled->("${base}_exon$ia"), $settled->("${base}_exon$ib"));
             my $coords = sub { my $sh = shift; my @na = @$ra[1, 2]; my @nb = @$rb[1, 2]; if ($d eq '+') { $na[1] += $sh; $nb[0] += $sh } else { $na[0] -= $sh; $nb[1] -= $sh } (\@na, \@nb) };
             my $intron = sub { my ($p, $q) = @_; my ($lo, $hi) = $d eq '+' ? ($p->[1] + 1, $q->[0] - 1) : ($q->[1] + 1, $p->[0] - 1); return '' if $hi < $lo || $lo < 1 || $hi > $len; my $s = substr($seq, $lo - 1, $hi - $lo + 1); $d eq '-' ? $rc->($s) : $s };
-            my %sc; my %mo; for my $sh (-10 .. 10) { my ($na, $nb) = $coords->($sh); next if $na->[1] < $na->[0] || $nb->[1] < $nb->[0];
+            # medians of the two exons (any consensus), to break ties among equal motif scores
+            my $medof = sub { my $g = shift; for my $lin ("F:" . ($o{family} // 'NA'), "O:" . ($o{order} // 'NA')) { my $c = $cell{$g}{$lin}; return $c->[0] if $c && $c->[1] >= $MIN_N } undef };
+            my ($ma, $mb) = ($medof->("${base}_exon$ia"), $medof->("${base}_exon$ib"));
+            my %sc; my %mo; my %dev; for my $sh (-10 .. 10) { my ($na, $nb) = $coords->($sh); next if $na->[1] < $na->[0] || $nb->[1] < $nb->[0];
+                $dev{$sh} = (defined $ma ? abs($na->[1] - $na->[0] + 1 - $ma) : 0) + (defined $mb ? abs($nb->[1] - $nb->[0] + 1 - $mb) : 0);
                 my $m = $motif->($intron->($na, $nb)); next if $m < 0; next if $sh && $m < (abs($sh) <= 3 ? 4 : 6); $mo{$sh} = $m;
                 my $conv = (defined $ea && defined $eb && $na->[1] - $na->[0] + 1 == $ea && $nb->[1] - $nb->[0] + 1 == $eb) ? 1 : 0;
                 $sc{$sh} = $m * 10 + $conv }
             next unless defined $sc{0};
-            my ($best) = sort { $sc{$b} <=> $sc{$a} || abs($a) <=> abs($b) } keys %sc;
+            # ties: nearest to the lineage's exon medians, then the smaller move, then the
+            # earlier position; without the last two keys hash order decided, and the same
+            # clpP junction landed 4 nt apart in two runs of one genome
+            my ($best) = sort { $sc{$b} <=> $sc{$a} || $dev{$a} <=> $dev{$b} || abs($a) <=> abs($b) || $a <=> $b } keys %sc;
             printf STDERR "SPLICE_DEBUG %s exon%d|%d %s len %d/%d cells %s/%s scores %s best %d\n", $base, $ia, $ib, $d, $ra->[2]-$ra->[1]+1, $rb->[2]-$rb->[1]+1, $ea // '-', $eb // '-', join(' ', map { "$_:$sc{$_}" } sort { $a <=> $b } keys %sc), $best if $ENV{ANNOBTD_DEBUG_SPLICE};
             my $iname = "${base}_intron$ia"; my ($irow) = grep { $rows[$_][0] eq $iname && ($d eq '+' ? $rows[$_][1] == $ra->[2] + 1 : $rows[$_][2] == $ra->[1] - 1) } 0 .. $#rows;
             if ($best != 0 && $sc{$best} > $sc{0}) {
