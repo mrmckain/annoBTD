@@ -78,6 +78,12 @@ if ($o{'guides-dir'} && opendir(my $gd, $o{'guides-dir'})) {
             if ($f[0] =~ /^(.+)_exon1$/) { push @{ $gex1{$1} }, $f[2] - $f[1] + 1 } elsif ($f[0] !~ /_exon\d+$/) { $gcds{$f[0]}{$g} //= [@f[1..3]] } } close $gh }
     closedir $gd }
 sub guide_mode { my @l = @_; my %c; $c{$_}++ for @l; my ($m) = sort { $c{$b} <=> $c{$a} || $a <=> $b } keys %c; $m }
+# The genome as BLAST must see it. BLAST drops letters that are not nucleotide codes
+# (an assembly with nine X in a gap), so every subject coordinate after them comes
+# back short while every Perl coordinate counts them: the guide-majority and rescue
+# steps mapped clpP 9 nt off in Agave santana-mitchilli. Non-ACGT letters become N,
+# which BLAST keeps, and the file is written once.
+my $blast_genome; sub blast_genome { return $blast_genome if $blast_genome; require File::Temp; my ($fh, $f) = File::Temp::tempfile(UNLINK => 1); (my $s = $seq) =~ tr/ACGT/N/c; print $fh ">genome\n$s\n"; close $fh; $blast_genome = $f }
 # canonical plastid protein genes (tables/plastid_cds_names.txt): the only names the
 # rescue and the intact-ORF exemption apply to
 my %CANON; { my ($f) = grep { -s $_ } map { "$_/plastid_cds_names.txt" } grep { defined } ($ENV{ANNOBTD_DIR} ? "$ENV{ANNOBTD_DIR}/tables" : undef), "$FindBin::Bin/../tables";
@@ -277,7 +283,7 @@ if ($o{'guide-seqs'} && -d $o{'guide-seqs'} && %gcds && $seq && !$o{'no-rescue'}
                 ($gname, $gprot, $glen) = ($g, $p, length $x); last }
             next unless $gprot;
             open my $qf, ">", "$dir/q.fa" or die; print $qf ">$gene\n$gprot\n"; close $qf;
-            my @h = map { chomp; [split /\t/] } `$tblastn -query $dir/q.fa -subject $fsa -outfmt '6 sstart send sframe pident length qstart qend evalue' 2>/dev/null`;
+            my $bg = blast_genome(); my @h = map { chomp; [split /\t/] } `$tblastn -query $dir/q.fa -subject $bg -outfmt '6 sstart send sframe pident length qstart qend evalue' 2>/dev/null`;
             my ($best) = sort { $a->[7] <=> $b->[7] || $b->[4] <=> $a->[4] } grep { $_->[3] >= 80 && $_->[4] >= 0.9 * length($gprot) && $_->[7] <= 1e-3 } @h;   # coverage and identity carry the decision; a 34 aa psbM cannot reach a strict e-value
             unless ($best) { printf $log "RESCUE\tno %s: carried by %d of %d guides, no full-length hit in the genome (%s)\n", $gene, scalar @carriers, $nguides, (@h ? sprintf("best %.0f%% over %d of %d aa", $h[0][3], $h[0][4], length $gprot) : 'nothing'); next }
             my $d = $best->[2] < 0 ? '-' : '+'; my ($hs, $he) = sort { $a <=> $b } ($best->[0], $best->[1]);
@@ -372,6 +378,61 @@ if ($o{aragorn} && -x $o{aragorn} && $seq) {
         else { printf $log "TRNA_WINDOW\t%s %d-%d %s\t-> %d-%d\n", $r[0][0], $s0, $e0, $g->{d}, $ns, $ne; ($r[0][1], $r[0][2]) = ($ns, $ne); $moved{ $g->{rows}[0] } = 1 } }
 }
 
+# --- 3b. splice junctions from the majority of the guides --------------------------------
+# A boundary is transferred from ONE guide, the best-scoring reference for that ORF,
+# and one guide can be wrong: Agave durangensis NC_072313 annotates clpP exon 3 nine
+# nt into the intron, and as the nearest guide of 72 Agavoideae genomes it handed
+# that boundary to all of them while the other seven guides agreed on the right one.
+# Here every guide's exons are mapped onto the target with blastn (hits reaching
+# within 2 nt of both exon ends, the ends restored), and where at least three guides
+# place a junction and at least 75% of them (a 5-of-8 split moved Sorghum ycf3 exon 1 off a
+# correct position, 60% was too loose)
+# agree on a position that differs from the call, the call moves there, provided
+# the spliced product stays intact. The motif slide (section 4) runs afterwards and
+# still has the last word where the motif is informative; where it is not (clpP
+# intron 2, TGGCG..TC) the majority is what decides.
+my %majority;
+if ($o{'guide-seqs'} && -d $o{'guide-seqs'} && $o{'guides-dir'} && $seq && !$o{'no-majority'}) {
+    my $blastn = $o{'blast-bin'} ? "$o{'blast-bin'}/blastn" : $ENV{BLAST_BIN} ? "$ENV{BLAST_BIN}/blastn" : (grep { -x $_ } map { "$_/blastn" } split /:/, $ENV{PATH})[0];
+    if ($blastn && -x $blastn) { require File::Temp; my $dir = File::Temp::tempdir(CLEANUP => 1);
+        # spliced CDS genes in the annotation: base -> strand -> exon rows (index) in transcript order
+        my %gene; for my $i (@feat) { next if $drop{$i}; my $r = $rows[$i]; next if $r->[0] =~ /^(trn|rrn)/; next unless $r->[0] =~ /^(.+)_exon(\d+)$/; push @{ $gene{"$1\t$r->[3]"} }, [$2, $i] }
+        my %want = map { (split /\t/)[0] => 1 } keys %gene;
+        # each guide's exons of those genes, as one blastn query file per guide
+        my %pos;   # base -> exon rank -> "s|e" -> count
+        if (opendir(my $gd, $o{'guides-dir'})) { for my $g (grep { !/^\./ } readdir $gd) { my $gs = ''; open my $fh, "<", "$o{'guide-seqs'}/$g" or next; while (<$fh>) { next if /^>/; s/\s//g; $gs .= uc $_ } close $fh;
+                my %gex; open my $gh, "<", "$o{'guides-dir'}/$g" or next; while (<$gh>) { chomp; my @f = split /\t/; next unless ($f[4] // '') eq 'CDS' && $f[0] =~ /^(.+)_exon(\d+)$/ && $want{$1}; push @{ $gex{$1} }, [$2, @f[1..3]] } close $gh;
+                next unless %gex; open my $qf, ">", "$dir/q_$g.fa" or next; my $nq = 0;
+                for my $bg (keys %gex) { my @ex = sort { $a->[1] <=> $b->[1] } @{ $gex{$bg} }; my $d = $ex[0][3]; @ex = reverse @ex if $d eq '-';   # transcript order
+                    for my $k (0 .. $#ex) { my $x = substr($gs, $ex[$k][1] - 1, $ex[$k][2] - $ex[$k][1] + 1); next if length($x) < 20; if ($d eq '-') { $x = reverse $x; $x =~ tr/ACGT/TGCA/ } print $qf ">$bg|$k\n$x\n"; $nq++ } } close $qf;
+                next unless $nq;
+                my $bgf = blast_genome(); for (`$blastn -task blastn -query $dir/q_$g.fa -subject $bgf -outfmt '6 qseqid qlen qstart qend sstart send pident' 2>/dev/null`) { chomp; my ($qid, $ql, $qs, $qe, $ss, $se, $pid) = split /\t/; next unless $qs <= 3 && $qe >= $ql - 2 && $pid >= 90;
+                    # blastn trims a mismatched terminal base; put the exon ends back where the whole exon would sit
+                    my ($bg, $k) = split /\|/, $qid; my ($lo, $hi) = $ss < $se ? ($ss - ($qs - 1), $se + ($ql - $qe)) : ($se - ($ql - $qe), $ss + ($qs - 1)); $pos{$bg}{$k}{"$lo|$hi"}++ } }
+            closedir $gd }
+        for my $key (sort keys %gene) { my ($base, $d) = split /\t/, $key; my @ex = sort { $a->[0] <=> $b->[0] } @{ $gene{$key} }; next unless $pos{$base};
+            for my $k (0 .. $#ex - 1) { my ($ia, $ib) = ($ex[$k][1], $ex[$k+1][1]); my ($ra, $rb) = ($rows[$ia], $rows[$ib]);
+                # the junction: exon k's transcript-3' end and exon k+1's transcript-5' start, in genome coordinates
+                my ($va, $vb) = ($pos{$base}{$k}, $pos{$base}{$k+1});
+                printf STDERR "JUNCTION_DEBUG %s exon%d|%d current %s..%s | %s..%s votes exon%d: %s ; exon%d: %s\n", $base, $ex[$k][0], $ex[$k+1][0], $ra->[1], $ra->[2], $rb->[1], $rb->[2], $ex[$k][0], join(' ', map { "$_=$va->{$_}" } sort keys %{ $va || {} }), $ex[$k+1][0], join(' ', map { "$_=$vb->{$_}" } sort keys %{ $vb || {} }) if $ENV{ANNOBTD_DEBUG_JUNCTION};
+                next unless $va && $vb;
+                my $vote = sub { my ($v, $side) = @_; my (%c, $tot); for my $p (keys %$v) { my ($lo, $hi) = split /\|/, $p; my $x = $side eq 'end' ? ($d eq '+' ? $hi : $lo) : ($d eq '+' ? $lo : $hi); $c{$x} += $v->{$p}; $tot += $v->{$p} } my ($best) = sort { $c{$b} <=> $c{$a} || $a <=> $b } keys %c; return ($tot >= 3 && $c{$best} >= 0.75 * $tot) ? ($best, $c{$best}, $tot) : () };
+                my ($ea, $na, $ta) = $vote->($va, 'end'); my ($sb, $nb, $tb) = $vote->($vb, 'start'); next unless defined $ea && defined $sb;
+                my $cur_a = $d eq '+' ? $ra->[2] : $ra->[1]; my $cur_b = $d eq '+' ? $rb->[1] : $rb->[2]; next if $cur_a == $ea && $cur_b == $sb;
+                next if abs($cur_a - $ea) > 30 || abs($cur_b - $sb) > 30;
+                my @na = @$ra[1, 2]; my @nb = @$rb[1, 2]; if ($d eq '+') { $na[1] = $ea; $nb[0] = $sb } else { $na[0] = $ea; $nb[1] = $sb }
+                next if $na[1] < $na[0] || $nb[1] < $nb[0];
+                # the whole spliced CDS with this junction must stay intact (all exons, this pair replaced)
+                my @parts = map { $_->[1] == $ia ? \@na : $_->[1] == $ib ? \@nb : [@{ $rows[$_->[1]] }[1, 2]] } @ex; @parts = sort { $a->[0] <=> $b->[0] } @parts;
+                my $cds = join '', map { substr($seq, $_->[0] - 1, $_->[1] - $_->[0] + 1) } @parts; if ($d eq '-') { $cds = reverse $cds; $cds =~ tr/ACGT/TGCA/ }
+                next if length($cds) % 3; my $p = translate($cds); $p =~ s/\*$//; next if $p =~ /\*/;
+                my $iname = "${base}_intron" . $ex[$k][0]; my ($irow) = grep { $rows[$_][0] eq $iname } 0 .. $#rows;
+                printf $log "JUNCTION_GUIDES\t%s exon%d|exon%d %d|%d -> %d|%d %s (%d of %d and %d of %d guides)\n", $base, $ex[$k][0], $ex[$k+1][0], $cur_a, $cur_b, $ea, $sb, $d, $na, $ta, $nb, $tb;
+                @$ra[1, 2] = @na; @$rb[1, 2] = @nb; $majority{$ia} = $majority{$ib} = 1;
+                if (defined $irow) { if ($d eq '+') { ($rows[$irow][1], $rows[$irow][2]) = ($ea + 1, $sb - 1) } else { ($rows[$irow][1], $rows[$irow][2]) = ($sb + 1, $ea - 1) } } } }
+    } else { print $log "JUNCTION_GUIDES\tskipped: no blastn\n" }
+}
+
 # --- 4. splice junctions: the group II boundary motif, then the exon-length convention -
 # A junction transferred from guides often lands 1-3 nt off: exon i ends short by k
 # and exon i+1 starts early by k. In every one of the 127 junctions of the nine
@@ -407,7 +468,11 @@ if ($seq) {
             # medians of the two exons (any consensus), to break ties among equal motif scores
             my $medof = sub { my $g = shift; for my $lin ("F:" . ($o{family} // 'NA'), "O:" . ($o{order} // 'NA')) { my $c = $cell{$g}{$lin}; return $c->[0] if $c && $c->[1] >= $MIN_N } undef };
             my ($ma, $mb) = ($medof->("${base}_exon$ia"), $medof->("${base}_exon$ib"));
-            my %sc; my %mo; my %dev; for my $sh (-10 .. 10) { my ($na, $nb) = $coords->($sh); next if $na->[1] < $na->[0] || $nb->[1] < $nb->[0];
+            # a junction that 75% of the guides placed (section 3b) is refined within 3 nt only:
+            # a far move exists to repair a guide that was far off, and here the guides were not
+            # (Agave santana-mitchilli clpP intron 2: a chance GTG..AY eight nt away scored 6)
+            my $reach = ($majority{ $ex[$k][1] } || $majority{ $ex[$k+1][1] }) ? 3 : 10;
+            my %sc; my %mo; my %dev; for my $sh (-$reach .. $reach) { my ($na, $nb) = $coords->($sh); next if $na->[1] < $na->[0] || $nb->[1] < $nb->[0];
                 $dev{$sh} = (defined $ma ? abs($na->[1] - $na->[0] + 1 - $ma) : 0) + (defined $mb ? abs($nb->[1] - $nb->[0] + 1 - $mb) : 0);
                 my $m = $motif->($intron->($na, $nb)); next if $m < 0; next if $sh && $m < (abs($sh) <= 3 ? 4 : 6); $mo{$sh} = $m;
                 my $conv = (defined $ea && defined $eb && $na->[1] - $na->[0] + 1 == $ea && $nb->[1] - $nb->[0] + 1 == $eb) ? 1 : 0;
@@ -480,7 +545,7 @@ if ($o{profile} && -s $o{profile} && $seq) {
 }
 
 # --- rewrite, merging intergenic rows around removed features ------------------
-unless (%drop || %moved || %moved_strand || %renamed || %spliced || %extended || %rescued) { close $log if $o{log}; exit 0 }
+unless (%drop || %moved || %moved_strand || %renamed || %spliced || %extended || %rescued || %majority) { close $log if $o{log}; exit 0 }
 my @keep = grep { !$drop{$_} } @feat;
 my @out;
 # feature rows in file order, skipping dropped ones and all old intergenic rows
@@ -496,7 +561,7 @@ push @gaps, ["$prev_name~End", $prev_end + 1, $len, '+'] if $len && $len > $prev
 my @regions = grep { $_->[0] =~ /^(LSC|SSC|IRA|IRB|FULL)$/ } @out; my @features = grep { $_->[0] !~ /^(LSC|SSC|IRA|IRB|FULL)$/ } @out;
 my @merged = sort { $a->[1] <=> $b->[1] || ($a->[0] =~ /~/ ? 0 : 1) <=> ($b->[0] =~ /~/ ? 0 : 1) } (@features, @gaps);
 open my $w, ">", $ann or die; print $w join("\t", @$_), "\n" for @merged, @regions; close $w;
-printf $log "removed %d feature rows, moved %d tRNA rows, re-stranded %d, renamed %d, exon junctions slid %d, starts fixed %d, genes rescued %d\n", scalar keys %drop, scalar keys %moved, scalar keys %moved_strand, scalar keys %renamed, scalar keys %spliced, scalar keys %extended, scalar keys %rescued; close $log if $o{log};
+printf $log "removed %d feature rows, moved %d tRNA rows, re-stranded %d, renamed %d, junctions from guides %d, exon junctions slid %d, starts fixed %d, genes rescued %d\n", scalar keys %drop, scalar keys %moved, scalar keys %moved_strand, scalar keys %renamed, scalar keys %majority, scalar keys %spliced, scalar keys %extended, scalar keys %rescued; close $log if $o{log};
 
 # Structural placement of a tRNA gene inside an ARAGORN window. ARAGORN pads its
 # window with a flanking base at either end whenever that base can pair, so the

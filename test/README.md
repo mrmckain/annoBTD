@@ -140,6 +140,21 @@ Three rules came out of annotating 91 new Agavoideae plastomes (October 2026):
   upstream one (`START_FIX` lines).
 
 All three leave the nine-genome benchmark unchanged (1284 both-exact, 56 spurious).
+
+- **Junctions from the guide majority.** A boundary is transferred from one guide, the
+  best-scoring reference for that ORF, and one guide can be wrong: the Agave durangensis
+  record annotates clpP exon 3 nine nt into the intron and, as the nearest guide of 72
+  Agavoideae genomes, handed that boundary to all of them while the other seven guides
+  agreed on the right one (the right one aligns to tobacco, Arabidopsis and spinach ClpP
+  with one gap, the wrong one with four). The post filter now maps every guide's exons
+  onto the target with blastn and, where at least three guides vote and 75% agree on a
+  junction position that differs from the call, moves the call there if the product
+  stays intact (`JUNCTION_GUIDES`). The motif slide then refines such a junction within
+  3 nt only. 60% was too loose (a 5-of-8 split moved Sorghum ycf3 off a correct
+  position). Benchmark: 1284 to 1285 both-exact (Spinacia rps16), spurious unchanged.
+  BLAST drops letters that are not nucleotide codes, so the post filter hands it a copy
+  of the genome with non-ACGT letters as N; an assembly with nine X in a gap had every
+  BLAST coordinate downstream 9 nt short.
 `tools/verdant_edit.pl` applies hand curation (rename, add, delete, move) to an
 annotation table and rebuilds its spacer rows; pseudogenes are marked with the
 suffix `_pseudogene`.
