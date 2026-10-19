@@ -69,8 +69,8 @@ the previous set to `archive/refs_<date>/`.
 | `species_units.tsv`, `species_lengths.tsv`, `species_consensus.tsv` | `build_species_consensus.pl` | one vote per submitter group, one form per species; the representative record of each species |
 | `gene_expect.tsv`, `gene_profile.tsv` | `build_expect_from_lengths.pl` | species-voted length expectations by genus / family / order / all |
 | `lineage_species_counts.tsv` | `refresh_references.sh` | species per family and order, the presence prior's denominator |
-| `trna_window_residuals.tsv`, `trna_exon_lengths.tsv` | curated by hand | tRNA boundary convention used by the ARAGORN refinement and `../recurate_trna.pl` |
-| `../trna_library.fasta` | `../build_trna_library.pl` over the 51 truth sets | one sequence per tRNA identity per curated genome; the post filter names every tRNA call by its best hit, leaving the target's own entries out |
+| `trna_window_residuals.tsv`, `trna_exon_lengths.tsv` | curated by hand | tRNA boundary convention used by the ARAGORN refinement and `../refdb_build/recurate_trna.pl` |
+| `../tables/trna_library.fasta` | `../refdb_build/build_trna_library.pl` over the 51 truth sets | one sequence per tRNA identity per curated genome; the post filter names every tRNA call by its best hit, leaving the target's own entries out |
 | `truth_curation.tsv` | by hand | every edit made to a truth table beyond what its GenBank record says, with the evidence (tRNA strands and identities the sequence contradicts) |
 
 Superseded versions of these tables, the record-voted profile pipeline's
@@ -118,6 +118,46 @@ errors are the records' own: grass ndhK, Nicotiana psbI (ATC) and ycf1 (GTG one
 codon up), Spinacia ndhD (ATC), accD, psbH and rpl22, Marchantia ndhJ. Lowering
 the settled-cell consensus from 0.9 to 0.85 or 0.8 was measured and lost (1278
 and 1269 against 1280 on the hybrid arm at that stage).
+
+### Genes the ORF stage loses, intact genes the prior would drop, starts on non-initiators
+
+Three rules came out of annotating 91 new Agavoideae plastomes (October 2026):
+
+- **Rescue.** `annotate_plastome.pl` drops an ORF that a longer ORF in another frame
+  covers by 90% unless it is at least 60% as long, so a 105 nt psbM inside a 285 nt
+  open frame never reaches BLAST. The post filter now searches directly, with
+  tblastn, for every canonical CDS (`tables/plastid_cds_names.txt`) that at least half
+  the guides carry and the annotation lacks, and adds it when the hit is full length,
+  the ORF intact and within 10% of the guide's length (`RESCUE` lines).
+- **Intact-ORF exemption.** A canonical gene that is an intact ORF of the guides' and
+  the lineage's length is kept against the presence prior when its share is at least
+  0.25 (Asparagaceae infA: 0.47 of species, 4 of 8 guides, reads through in Agave).
+  Without the name test the rule kept ycf15, ycf68 and orf77 (+18 spurious); without
+  the share floor it kept the 192 nt grass "ycf1" fragment.
+- **Start fix.** A CDS that starts on a codon that cannot initiate (Nolina atpB on TAC,
+  cemA on AAA copied from a record) moves to the in-frame ATG or GTG within 30 codons
+  that gives the settled expectation, else the guides' modal length, else the nearest
+  upstream one (`START_FIX` lines).
+
+All three leave the nine-genome benchmark unchanged (1284 both-exact, 56 spurious).
+
+- **Junctions from the guide majority.** A boundary is transferred from one guide, the
+  best-scoring reference for that ORF, and one guide can be wrong: the Agave durangensis
+  record annotates clpP exon 3 nine nt into the intron and, as the nearest guide of 72
+  Agavoideae genomes, handed that boundary to all of them while the other seven guides
+  agreed on the right one (the right one aligns to tobacco, Arabidopsis and spinach ClpP
+  with one gap, the wrong one with four). The post filter now maps every guide's exons
+  onto the target with blastn and, where at least three guides vote and 75% agree on a
+  junction position that differs from the call, moves the call there if the product
+  stays intact (`JUNCTION_GUIDES`). The motif slide then refines such a junction within
+  3 nt only. 60% was too loose (a 5-of-8 split moved Sorghum ycf3 off a correct
+  position). Benchmark: 1284 to 1285 both-exact (Spinacia rps16), spurious unchanged.
+  BLAST drops letters that are not nucleotide codes, so the post filter hands it a copy
+  of the genome with non-ACGT letters as N; an assembly with nine X in a gap had every
+  BLAST coordinate downstream 9 nt short.
+`tools/verdant_edit.pl` applies hand curation (rename, add, delete, move) to an
+annotation table and rebuilds its spacer rows; pseudogenes are marked with the
+suffix `_pseudogene`.
 
 ## Reading the output
 
@@ -188,7 +228,7 @@ any remaining algorithmic change.
 
 The arms below are the ones every later change is measured against. All nine
 truth tables (and the 12 Asparagaceae and 30 grass tables in `asp/` and
-`curated/`) sit on one tRNA convention (`../recurate_trna.pl`, ARAGORN 1.2.41).
+`curated/`) sit on one tRNA convention (`../refdb_build/recurate_trna.pl`, ARAGORN 1.2.41).
 "both exact" counts features with both boundaries correct, out of 1,330 truth
 features (`truth_curation.tsv` lists the six edits made to the records' own
 annotation, all tRNA strands and identities the sequence contradicts).
@@ -358,12 +398,12 @@ and the full one otherwise. Three scripts use a pool:
 
 ```bash
 # once: sketch the pool (resumable, ~1 accession/sec against NCBI's rate limit)
-perl build_reference_sketches.pl taxonomy_cache.tsv reference_sketches.tsv
+perl ../refdb_build/build_reference_sketches.pl taxonomy_cache.tsv reference_sketches.tsv
 
 # per genome: rank the pool and fetch the closest guides
-perl select_guides.pl target.fsa reference_sketches.tsv -n 3 --one-per-genus > ranking.tsv
-guides=$(./fetch_guides.sh ranking.tsv ./sequenceFiles ./files)
-./run_annotation_pipeline.sh target.fsa "$guides" MySpecies
+perl ../guides/select_guides.pl target.fsa reference_sketches.tsv -n 3 --one-per-genus > ranking.tsv
+guides=$(../guides/fetch_guides.sh ranking.tsv ./sequenceFiles ./files)
+../pipeline/run_annotation_pipeline.sh target.fsa "$guides" MySpecies
 ```
 
 Holding exact k-mer sets for ~8,000 genomes would mean ~1.2 billion k-mers, so
@@ -565,11 +605,11 @@ difference under about a point was indistinguishable from run-to-run noise.
 
 ## Debugging a specific coordinate
 
-`match_orfs_to_blast_v2.2.pl` will dump the intermediate values behind every CDS
+`pipeline/match_orfs_to_blast_v2.2.pl` will dump the intermediate values behind every CDS
 coordinate it emits:
 
 ```bash
-ANNOBTD_DEBUG_COORDS=/tmp/coords.tsv ./run_annotation_pipeline.sh ...
+ANNOBTD_DEBUG_COORDS=/tmp/coords.tsv ../pipeline/run_annotation_pipeline.sh ...
 ```
 
 Each row gives the sub and branch that fired, the ORF bounds, the reading frame,
@@ -613,7 +653,7 @@ perl unit_boundary.pl
 
 Exercises `match_start`, `alt_start`, `match_end`, `translate`,
 `best_match_frames` and `extend_rna_hit` directly. The subs are lifted out of
-`match_orfs_to_blast_v2.2.pl` at run time, so there is no duplicated copy to
+`pipeline/match_orfs_to_blast_v2.2.pl` at run time, so there is no duplicated copy to
 drift.
 
 All 33 currently pass. A test may be marked `KNOWN-BAD` to pin a defect that is

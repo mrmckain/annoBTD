@@ -3,14 +3,16 @@
 #
 # Guide names are looked up as $SEQDIR/<name> (sequence) and $FILEDIR/<name> (annotation).
 #
-# ANNOBTD_DIR - where these scripts live      (default: annoBTD_multiref)
+# ANNOBTD_DIR - the annoBTD root (default: the parent of this script)
 # SEQDIR      - guide sequences               (default: ./sequenceFiles)
 # FILEDIR     - guide annotations             (default: ./files)
 # See run_multiblast.sh for BLAST_BIN / BLAST_THREADS / BLAST_EVALUE.
 
 set -euo pipefail
 
-ANNOBTD_DIR="${ANNOBTD_DIR:-annoBTD_multiref}"
+ANNOBTD_DIR="${ANNOBTD_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+# ARAGORN: the binary built into bin/, else the one on PATH (e.g. from bioconda)
+ARAGORN_BIN="${ANNOBTD_ARAGORN:-$ANNOBTD_DIR/bin/aragorn}"; [ -x "$ARAGORN_BIN" ] || ARAGORN_BIN="$(command -v aragorn 2>/dev/null || true)"
 SEQDIR="${SEQDIR:-./sequenceFiles}"
 FILEDIR="${FILEDIR:-./files}"
 
@@ -40,7 +42,7 @@ for file in $(echo "$GUIDES" | tr "," " "); do
     IDX=$((IDX + 1))
     echo -e "${IDX}\t${file}"
 done > "${RANKING}.idx"
-if perl "$ANNOBTD_DIR/rank_references_by_kmer.pl" "$PLASTOME" \
+if perl "$ANNOBTD_DIR/guides/rank_references_by_kmer.pl" "$PLASTOME" \
         $(awk -F'\t' -v d="$SEQDIR" '{print d"/"$2}' "${RANKING}.idx") \
         > "${RANKING}.raw" 2>/dev/null; then
     awk -F'\t' 'NR==FNR{idx[$2]=$1; next} {print idx[$1]"\t"$1"\t"$4}' \
@@ -68,12 +70,12 @@ fi
 export ANNOBTD_REF_RANKING="$RANKING"
 fi
 
-perl "$ANNOBTD_DIR/annotate_plastome.pl" "$PLASTOME" "$SP" "${ANNOBTD_MAX_OVERLAP:-0.9}" "${ANNOBTD_MIN_ORF_NT:-19}" "${ANNOBTD_MIN_LEN_RATIO:-0.6}"
+perl "$ANNOBTD_DIR/pipeline/annotate_plastome.pl" "$PLASTOME" "$SP" "${ANNOBTD_MAX_OVERLAP:-0.9}" "${ANNOBTD_MIN_ORF_NT:-19}" "${ANNOBTD_MIN_LEN_RATIO:-0.6}"
 
 COUNT=0
 for file in $(echo "$GUIDES" | tr "," " "); do
     COUNT=$((COUNT + 1))
-    perl "$ANNOBTD_DIR/get_annotated_regions_fromverdant.pl" \
+    perl "$ANNOBTD_DIR/pipeline/get_annotated_regions_fromverdant.pl" \
         "$SEQDIR/$file" "$FILEDIR/$file" "$SP" "$COUNT"
 done
 
@@ -89,7 +91,7 @@ if [ "${ANNOBTD_SCREEN_REFS:-1}" != "0" ]; then
     # case they were designed for - see check_references.pl.
     COMPOPT=""
     [ -n "${ANNOBTD_SCREEN_COMPARATIVE:-}" ] && COMPOPT="--comparative"
-    if perl "$ANNOBTD_DIR/check_references.pl" "$GF" $COMPOPT \
+    if perl "$ANNOBTD_DIR/pipeline/check_references.pl" "$GF" $COMPOPT \
             --tsv "${SP}_reference_problems.tsv" --drop "${GF}.screened" 2>/dev/null; then
         if [ -s "${GF}.screened" ]; then
             mv "${GF}.screened" "$GF"
@@ -97,31 +99,31 @@ if [ "${ANNOBTD_SCREEN_REFS:-1}" != "0" ]; then
     fi
 fi
 
-"$ANNOBTD_DIR/run_multiblast.sh" \
+"$ANNOBTD_DIR/pipeline/run_multiblast.sh" \
     "${SP}_annotated_regions_fromverdant_genes.fsa" \
     "${SP}_annotated_regions_fromverdant_trnas.fsa" \
     "${SP}_annotated_regions_fromverdant_rrnas.fsa" \
     "${SP}_orffinder_seqs.fsa" \
     "$PLASTOME"
 
-perl "$ANNOBTD_DIR/identify_best_ref_for_orf_withscoring_v0.7.pl" \
+perl "$ANNOBTD_DIR/pipeline/identify_best_ref_for_orf_withscoring_v0.7.pl" \
     "${SP}_orffinder_seqs.fsa_trnas.blastn" \
     "${SP}_annotated_regions_fromverdant_trnas.fsa" \
     "$PLASTOME" tRNA "$SP" "${SP}_orffinder_coordinates.txt"
 
 # Was hardcoded to Schizachyrium.fsa, which fed the wrong sequence to every
 # non-grass genome. The query for the rRNA blastn is the plastome being annotated.
-perl "$ANNOBTD_DIR/identify_best_ref_for_orf_withscoring_v0.7.pl" \
+perl "$ANNOBTD_DIR/pipeline/identify_best_ref_for_orf_withscoring_v0.7.pl" \
     "${SP}_orffinder_seqs.fsa_rrnas.blastn" \
     "${SP}_annotated_regions_fromverdant_rrnas.fsa" \
     "$PLASTOME" rRNA "$SP" "${SP}_orffinder_coordinates.txt"
 
-perl "$ANNOBTD_DIR/identify_best_ref_for_orf_withscoring_v0.7.pl" \
+perl "$ANNOBTD_DIR/pipeline/identify_best_ref_for_orf_withscoring_v0.7.pl" \
     "${SP}_orffinder_seqs.fsa_genes.tblastx" \
     "${SP}_annotated_regions_fromverdant_genes.fsa" \
     "${SP}_orffinder_seqs.fsa" protein "$SP" "${SP}_orffinder_coordinates.txt"
 
-perl "$ANNOBTD_DIR/match_orfs_to_blast_v2.2.pl" \
+perl "$ANNOBTD_DIR/pipeline/match_orfs_to_blast_v2.2.pl" \
     "${SP}_annotated_regions_fromverdant_genes.fsa" \
     "${SP}_orffinder_seqs.fsa" \
     "${SP}_best_orfs_for_refs_SCORE.txt" \
@@ -155,19 +157,19 @@ ANNOTATION="${SP}_VERDANT_cleaned_annotation.txt"
 # (build_trna_library.pl; ANNOBTD_TRNA_LIBRARY to point elsewhere, ANNOBTD_NO_TRNA_LIBRARY
 # to skip, ANNOBTD_TRNA_LIBRARY_EXCLUDE=name,acc,... to leave the genome's own entries out).
 if [ -z "${ANNOBTD_SKIP_POSTFILTER:-}" ] && [ -s "$ANNOTATION" ]; then
-    perl "$ANNOBTD_DIR/post_filter_annotation.pl" "$PLASTOME" "$ANNOTATION" \
-        --guides-dir "${FILEDIR:-./files}" \
+    perl "$ANNOBTD_DIR/pipeline/post_filter_annotation.pl" "$PLASTOME" "$ANNOTATION" \
+        --guides-dir "${FILEDIR:-./files}" --guide-seqs "$SEQDIR" \
         ${ANNOBTD_PROFILE:+--profile "$ANNOBTD_PROFILE"} ${ANNOBTD_LINEAGE_COUNTS:+--lineage-counts "$ANNOBTD_LINEAGE_COUNTS"} \
         --family "${ANNOBTD_FAMILY:-NA}" --order "${ANNOBTD_ORDER:-NA}" --genus "${ANNOBTD_GENUS:-NA}" --min-presence "${ANNOBTD_MIN_PRESENCE:-0.5}" \
-        $( [ -z "${ANNOBTD_NO_ARAGORN:-}" ] && [ -x "${ANNOBTD_ARAGORN:-$ANNOBTD_DIR/bin/aragorn}" ] && printf -- "--aragorn %s --trna-convention %s" "${ANNOBTD_ARAGORN:-$ANNOBTD_DIR/bin/aragorn}" "${ANNOBTD_TRNA_CONVENTION:-$ANNOBTD_DIR/trna_window_residuals.tsv}" ) \
+        $( [ -z "${ANNOBTD_NO_ARAGORN:-}" ] && [ -n "$ARAGORN_BIN" ] && [ -x "$ARAGORN_BIN" ] && printf -- "--aragorn %s --trna-convention %s" "$ARAGORN_BIN" "${ANNOBTD_TRNA_CONVENTION:-$ANNOBTD_DIR/tables/trna_window_residuals.tsv}" ) \
         ${ANNOBTD_SPECIES_UNITS:+--species-units "$ANNOBTD_SPECIES_UNITS"} ${ANNOBTD_SPECIES_GENES:+--species-genes "$ANNOBTD_SPECIES_GENES"} --presence-mode "${ANNOBTD_PRESENCE_MODE:-family}" \
-        $( [ -z "${ANNOBTD_NO_TRNA_LIBRARY:-}" ] && [ -s "${ANNOBTD_TRNA_LIBRARY:-$ANNOBTD_DIR/trna_library.fasta}" ] && printf -- "--trna-library %s" "${ANNOBTD_TRNA_LIBRARY:-$ANNOBTD_DIR/trna_library.fasta}" ) ${ANNOBTD_TRNA_LIBRARY_EXCLUDE:+--trna-library-exclude "$ANNOBTD_TRNA_LIBRARY_EXCLUDE"} ${BLAST_BIN:+--blast-bin "$BLAST_BIN"} \
+        $( [ -z "${ANNOBTD_NO_TRNA_LIBRARY:-}" ] && [ -s "${ANNOBTD_TRNA_LIBRARY:-$ANNOBTD_DIR/tables/trna_library.fasta}" ] && printf -- "--trna-library %s" "${ANNOBTD_TRNA_LIBRARY:-$ANNOBTD_DIR/tables/trna_library.fasta}" ) ${ANNOBTD_TRNA_LIBRARY_EXCLUDE:+--trna-library-exclude "$ANNOBTD_TRNA_LIBRARY_EXCLUDE"} ${BLAST_BIN:+--blast-bin "$BLAST_BIN"} \
         --log "${SP}_post_filter.txt" || true
 fi
 if [ -z "${ANNOBTD_SKIP_CHECKS:-}" ] && [ -s "$ANNOTATION" ]; then
-    perl "$ANNOBTD_DIR/check_annotation.pl" "$PLASTOME" "$ANNOTATION" \
+    perl "$ANNOBTD_DIR/pipeline/check_annotation.pl" "$PLASTOME" "$ANNOTATION" \
         --refs "${SP}_annotated_regions_fromverdant_genes.fsa" \
         --tsv "${SP}_check_annotation.tsv" || true
-    perl "$ANNOBTD_DIR/check_splice.pl" "$PLASTOME" "$ANNOTATION" \
+    perl "$ANNOBTD_DIR/pipeline/check_splice.pl" "$PLASTOME" "$ANNOTATION" \
         --tsv "${SP}_check_splice.tsv" --fix "${SP}_splice_fixes.txt" || true
 fi

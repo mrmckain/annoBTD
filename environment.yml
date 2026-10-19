@@ -1,0 +1,15 @@
+# conda environment with everything annoBTD needs at run time.
+#   conda env create -f environment.yml
+#   conda activate annobtd
+# ARAGORN comes from bioconda and is found on PATH; bin/aragorn need not be built.
+name: annobtd
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - perl >=5.26
+  - blast >=2.12
+  - aragorn =1.2.41
+  - curl
+  - tar
+  - gzip

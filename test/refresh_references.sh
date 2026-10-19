@@ -95,14 +95,14 @@ say "refresh: taxonomy $(rows "$TAX") rows, cache $(ls "$CACHE" | grep -c '\.gb$
 # ---- taxonomy: new accessions in GenBank --------------------------------------
 if wanted taxonomy; then
     say "[taxonomy] build_taxonomy_all.pl (esearch + esummary + taxonomy efetch for new records)"
-    perl "$ANNOBTD_DIR/build_taxonomy_all.pl" "$TAX" 2>&1 | tee -a "$LOG" >&2
+    perl "$ANNOBTD_DIR/refdb_build/build_taxonomy_all.pl" "$TAX" 2>&1 | tee -a "$LOG" >&2
     say "[taxonomy] $(rows "$TAX") rows"
 fi
 
 # ---- mine: flat files for anything not cached ---------------------------------
 if wanted mine; then
     say "[mine] mine_genbank_batch.sh (skips cached records)"
-    bash "$ANNOBTD_DIR/mine_genbank_batch.sh" "$TAX" "$CACHE" 2>&1 | tail -3 | tee -a "$LOG" >&2
+    bash "$ANNOBTD_DIR/refdb_build/mine_genbank_batch.sh" "$TAX" "$CACHE" 2>&1 | tail -3 | tee -a "$LOG" >&2
     say "[mine] cache now $(ls "$CACHE" | grep -c '\.gb$') records"
 fi
 
@@ -114,18 +114,18 @@ say "accessions with a cached record: $(wc -l < "$ACC" | tr -d ' ') of $(rows "$
 
 # ---- meta ---------------------------------------------------------------------
 if wanted meta; then
-    if current "$STAGE/record_meta.tsv" "$ACC" "$ANNOBTD_DIR/extract_record_meta.pl"; then say "[meta] current, skipped"; else
+    if current "$STAGE/record_meta.tsv" "$ACC" "$ANNOBTD_DIR/refdb_build/extract_record_meta.pl"; then say "[meta] current, skipped"; else
         say "[meta] extract_record_meta.pl over the cache"
-        perl "$ANNOBTD_DIR/extract_record_meta.pl" "$CACHE" > "$STAGE/record_meta.tsv.part" && mv "$STAGE/record_meta.tsv.part" "$STAGE/record_meta.tsv" || die "meta failed"
+        perl "$ANNOBTD_DIR/refdb_build/extract_record_meta.pl" "$CACHE" > "$STAGE/record_meta.tsv.part" && mv "$STAGE/record_meta.tsv.part" "$STAGE/record_meta.tsv" || die "meta failed"
         say "[meta] $(rows "$STAGE/record_meta.tsv") records"
     fi
 fi
 
 # ---- lengths ------------------------------------------------------------------
 if wanted lengths; then
-    if current "$STAGE/all_lengths.tsv" "$ACC" "$ANNOBTD_DIR/extract_guide_lengths.pl" "$ANNOBTD_DIR/gene_synonyms.tsv"; then say "[lengths] current, skipped"; else
+    if current "$STAGE/all_lengths.tsv" "$ACC" "$ANNOBTD_DIR/refdb_build/extract_guide_lengths.pl" "$ANNOBTD_DIR/tables/gene_synonyms.tsv"; then say "[lengths] current, skipped"; else
         say "[lengths] extract_guide_lengths.pl over $(wc -l < "$ACC" | tr -d ' ') records"
-        perl "$ANNOBTD_DIR/extract_guide_lengths.pl" "$CACHE" "$ACC" > "$STAGE/all_lengths.tsv.part" && mv "$STAGE/all_lengths.tsv.part" "$STAGE/all_lengths.tsv" || die "lengths failed"
+        perl "$ANNOBTD_DIR/refdb_build/extract_guide_lengths.pl" "$CACHE" "$ACC" > "$STAGE/all_lengths.tsv.part" && mv "$STAGE/all_lengths.tsv.part" "$STAGE/all_lengths.tsv" || die "lengths failed"
         say "[lengths] $(rows "$STAGE/all_lengths.tsv") feature rows"
     fi
 fi
@@ -142,7 +142,7 @@ if wanted sketches; then
         per=$(( (nmiss + WORKERS - 1) / WORKERS ))
         split -l "$per" -a 2 -d "$MISSING" "$P/acc."
         for f in "$P"/acc.??; do
-            perl "$ANNOBTD_DIR/build_reference_sketches.pl" "$TAX" "$f.db" --only-accessions "$f" --gb-dir "$CACHE" > "$f.log" 2>&1 &
+            perl "$ANNOBTD_DIR/refdb_build/build_reference_sketches.pl" "$TAX" "$f.db" --only-accessions "$f" --gb-dir "$CACHE" > "$f.log" 2>&1 &
         done
         wait
         n=0; for f in "$P"/acc.??.db; do [ -s "$f" ] || continue; cat "$f" >> "$SKETCH"; n=$((n + $(wc -l < "$f"))); done
@@ -152,9 +152,9 @@ fi
 
 # ---- taxcheck -----------------------------------------------------------------
 if wanted taxcheck; then
-    if current "$STAGE/taxonomy_consistency.tsv" "$SKETCH" "$ANNOBTD_DIR/check_taxonomy_consistency.pl"; then say "[taxcheck] current, skipped"; else
+    if current "$STAGE/taxonomy_consistency.tsv" "$SKETCH" "$ANNOBTD_DIR/refdb_build/check_taxonomy_consistency.pl"; then say "[taxcheck] current, skipped"; else
         say "[taxcheck] check_taxonomy_consistency.pl over $(rows "$SKETCH") sketches"
-        perl "$ANNOBTD_DIR/check_taxonomy_consistency.pl" "$SKETCH" "$STAGE/taxonomy_consistency.tsv.part" >> "$LOG" 2>&1 && mv "$STAGE/taxonomy_consistency.tsv.part" "$STAGE/taxonomy_consistency.tsv" || die "taxcheck failed"
+        perl "$ANNOBTD_DIR/refdb_build/check_taxonomy_consistency.pl" "$SKETCH" "$STAGE/taxonomy_consistency.tsv.part" >> "$LOG" 2>&1 && mv "$STAGE/taxonomy_consistency.tsv.part" "$STAGE/taxonomy_consistency.tsv" || die "taxcheck failed"
         say "[taxcheck] verdicts: $(awk -F'\t' 'NR>1{v[$11]++} END{for(k in v) printf "%s=%d ",k,v[k]}' "$STAGE/taxonomy_consistency.tsv")"
     fi
 fi
@@ -169,7 +169,7 @@ if wanted assign; then
         say "[assign] $nas assignable records: writing lineages into the taxonomy table and the sketch DB"
         B="$ARCHIVE/pre_assign_$(date +%Y%m%d_%H%M%S)"; mkdir -p "$B"
         for f in "$TAX.pre_assign" "$SKETCH.pre_assign"; do [ -e "$f" ] && mv "$f" "$B/"; done
-        perl "$ANNOBTD_DIR/assign_lineages.pl" "$CHK" "$TAX" "$SKETCH" "$STAGE/lineage_assignments.new.tsv" 2>&1 | tee -a "$LOG" >&2 || die "assign failed"
+        perl "$ANNOBTD_DIR/refdb_build/assign_lineages.pl" "$CHK" "$TAX" "$SKETCH" "$STAGE/lineage_assignments.new.tsv" 2>&1 | tee -a "$LOG" >&2 || die "assign failed"
         # the audit table is cumulative: earlier assignments stay on record
         { head -1 "$STAGE/lineage_assignments.new.tsv"
           { [ -s "$REFDB/lineage_assignments.tsv" ] && tail -n +2 "$REFDB/lineage_assignments.tsv"; tail -n +2 "$STAGE/lineage_assignments.new.tsv"; } | awk -F'\t' '!s[$1]++' | sort
@@ -183,9 +183,9 @@ if wanted consensus; then
     META="$STAGE/record_meta.tsv"; [ -s "$META" ] || META="$REFDB/record_meta.tsv"
     LENS="$STAGE/all_lengths.tsv"; [ -s "$LENS" ] || LENS="$REFDB/all_lengths.tsv"
     CHK="$STAGE/taxonomy_consistency.tsv"; [ -s "$CHK" ] || CHK="$REFDB/taxonomy_consistency.tsv"
-    if current "$STAGE/species_units.tsv" "$META" "$LENS" "$CHK" "$ANNOBTD_DIR/build_species_consensus.pl"; then say "[consensus] current, skipped"; else
+    if current "$STAGE/species_units.tsv" "$META" "$LENS" "$CHK" "$ANNOBTD_DIR/refdb_build/build_species_consensus.pl"; then say "[consensus] current, skipped"; else
         say "[consensus] build_species_consensus.pl ($META, $LENS, excluding MISLABELED from $CHK)"
-        perl "$ANNOBTD_DIR/build_species_consensus.pl" "$META" "$LENS" "$STAGE/species" --exclude "$CHK" 2>&1 | tee -a "$LOG" >&2 || die "consensus failed"
+        perl "$ANNOBTD_DIR/refdb_build/build_species_consensus.pl" "$META" "$LENS" "$STAGE/species" --exclude "$CHK" 2>&1 | tee -a "$LOG" >&2 || die "consensus failed"
         say "[consensus] $(rows "$STAGE/species_units.tsv") units, $(awk -F'\t' 'NR>1 && $8==1' "$STAGE/species_units.tsv" | wc -l | tr -d ' ') species representatives"
     fi
 fi
@@ -193,9 +193,9 @@ fi
 # ---- expect -------------------------------------------------------------------
 if wanted expect; then
     SL="$STAGE/species_lengths.tsv"; [ -s "$SL" ] || SL="$REFDB/species_lengths.tsv"
-    if current "$STAGE/gene_expect.tsv" "$SL" "$TAX" "$ANNOBTD_DIR/build_expect_from_lengths.pl"; then say "[expect] current, skipped"; else
+    if current "$STAGE/gene_expect.tsv" "$SL" "$TAX" "$ANNOBTD_DIR/refdb_build/build_expect_from_lengths.pl"; then say "[expect] current, skipped"; else
         say "[expect] build_expect_from_lengths.pl on $SL"
-        perl "$ANNOBTD_DIR/build_expect_from_lengths.pl" "$SL" "$TAX" "$STAGE/gene_expect.tsv" "$STAGE/gene_profile.tsv" 2>&1 | tee -a "$LOG" >&2 || die "expect failed"
+        perl "$ANNOBTD_DIR/refdb_build/build_expect_from_lengths.pl" "$SL" "$TAX" "$STAGE/gene_expect.tsv" "$STAGE/gene_profile.tsv" 2>&1 | tee -a "$LOG" >&2 || die "expect failed"
         say "[expect] $(rows "$STAGE/gene_expect.tsv") cells: $(awk -F'\t' 'NR>1{t[$2]++} END{for(k in t) printf "%s=%d ",k,t[k]}' "$STAGE/gene_expect.tsv")"
     fi
 fi

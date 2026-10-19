@@ -20,8 +20,8 @@
 #   >identity|accession|genome
 use strict; use warnings; use FindBin;
 my ($out, @truths) = @ARGV; die "usage: $0 <out.fasta> <truth.tsv>...\n" unless @truths;
-my $aragorn = "$FindBin::Bin/bin/aragorn";
-my %ok; if (open my $nh, "<", "$FindBin::Bin/plastid_trna_names.txt") { while (<$nh>) { next if /^#/; $ok{$_} = 1 for /(trn\S+)/g } close $nh }
+my $aragorn = -x "$FindBin::Bin/../bin/aragorn" ? "$FindBin::Bin/../bin/aragorn" : (grep { -x $_ } map { "$_/aragorn" } split /:/, $ENV{PATH})[0] // "";
+my %ok; if (open my $nh, "<", "$FindBin::Bin/../tables/plastid_trna_names.txt") { while (<$nh>) { next if /^#/; $ok{$_} = 1 for /(trn\S+)/g } close $nh }
 my %spliced = (trnI => 'trnI-GAU', trnA => 'trnA-UGC', trnK => 'trnK-UUU', trnG => 'trnG-UCC', trnL => 'trnL-UAA', trnV => 'trnV-UAC');
 open my $o, ">", $out or die "$out: $!"; my ($nent, %per_id);
 for my $truth (@truths) {

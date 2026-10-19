@@ -45,7 +45,7 @@ for my $acc (sort keys %want) {
         my $name = shift;
         unless ($loaded) { $loaded = 1;
             use FindBin;
-            if (open my $fh, "<", "$FindBin::Bin/gene_synonyms.tsv") { while (<$fh>) { chomp; next if /^#/ || !/\S/; my ($a, $b) = split /\t/; $syn{lc $a} = $b if $b } close $fh }
+            if (open my $fh, "<", "$FindBin::Bin/../tables/gene_synonyms.tsv") { while (<$fh>) { chomp; next if /^#/ || !/\S/; my ($a, $b) = split /\t/; $syn{lc $a} = $b if $b } close $fh }
             $canon{lc $_} = $_ for qw(accD atpA atpB atpE atpF atpH atpI ccsA cemA chlB chlL chlN clpP infA matK ndhA ndhB ndhC ndhD
                 ndhE ndhF ndhG ndhH ndhI ndhJ ndhK petA petB petD petG petL petN psaA psaB psaC psaI psaJ psaM psbA psbB psbC psbD
                 psbE psbF psbH psbI psbJ psbK psbL psbM psbN psbT psbZ rbcL rpl2 rpl14 rpl16 rpl20 rpl22 rpl23 rpl32 rpl33 rpl36

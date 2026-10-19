@@ -14,7 +14,17 @@ reproduce them are in [test/README.md](test/README.md).
 
 annoBTD is Perl and Bash and needs no Perl modules beyond the core distribution.
 
-Requirements:
+**With conda** (BLAST+ and ARAGORN come from bioconda):
+
+```bash
+git clone https://github.com/mrmckain/annoBTD.git
+cd annoBTD
+conda env create -f environment.yml
+conda activate annobtd
+./fetch_refdb.sh                    # reference database, ~310 MB download
+```
+
+**Without conda**, the requirements are:
 
 | what | why | install |
 |---|---|---|
@@ -29,13 +39,16 @@ Then:
 git clone https://github.com/mrmckain/annoBTD.git
 cd annoBTD
 cc -O2 -w -o bin/aragorn third_party/aragorn/aragorn1.2.41.c -lm    # tRNA boundaries
-./fetch_refdb.sh                                                    # reference database, ~350 MB download
+./fetch_refdb.sh                                                    # reference database, ~310 MB download
 ```
 
 BLAST+ must be on `PATH`, or set `BLAST_BIN=/path/to/ncbi-blast/bin`. ARAGORN
-(Laslett and Canback 2004, GPL v3) is vendored as source in `third_party/aragorn`;
-without the binary the annotator still runs but skips the tRNA boundary and strand
-checks that depend on it.
+(Laslett and Canback 2004, GPL v3) is vendored as source in `third_party/aragorn`
+and is also taken from `PATH` if it is installed there; without it the annotator
+still runs but skips the tRNA boundary and strand checks that depend on it.
+
+A bioconda recipe (`conda/recipe/`) installs annoBTD itself as the commands
+`annobtd` and `annobtd-fetch-refdb`; it is ready to submit once a release is tagged.
 
 Check the install with the built-in regression, which annotates one of the nine
 test genomes from the other eight and scores it against its GenBank record (about a
@@ -116,14 +129,18 @@ Output, in `Mygenus_species_annobtd/`:
 
 | | |
 |---|---|
-| `annobtd.sh` | annotate one genome (entry point) |
+| `annobtd.sh` | annotate one genome (the entry point) |
 | `fetch_refdb.sh` | download or build the reference database bundle |
-| `choose_guides.sh`, `select_guides.pl`, `fetch_guides.sh` | guide ranking, filtering and retrieval |
-| `run_annotation_pipeline.sh` | the annotation pipeline proper: `annotate_plastome.pl` (ORFs), `run_multiblast.sh`, `identify_best_ref_for_orf_withscoring_v0.7.pl`, `match_orfs_to_blast_v2.2.pl` (boundaries), `post_filter_annotation.pl` |
-| `build_*.pl`, `extract_*.pl`, `check_taxonomy_consistency.pl`, `assign_lineages.pl`, `mine_genbank_batch.sh` | building the reference database from GenBank |
-| `trna_library.fasta`, `trna_window_residuals.tsv`, `trna_exon_lengths.tsv`, `gene_synonyms.tsv`, `plastid_trna_names.txt` | curated tables the annotator reads |
-| `test/` | regression harness, truth sets, measured results |
+| `pipeline/` | the annotation pipeline: `run_annotation_pipeline.sh` drives `annotate_plastome.pl` (ORFs), `run_multiblast.sh`, `identify_best_ref_for_orf_withscoring_v0.7.pl`, `match_orfs_to_blast_v2.2.pl` (boundaries) and `post_filter_annotation.pl`; `check_annotation.pl` and `check_splice.pl` are its sanity reports |
+| `guides/` | choosing guides: `choose_guides.sh` (filters and the hybrid rule), `select_guides.pl` (sketch ranking), `score_guide_consistency.pl`, `fetch_guides.sh` |
+| `refdb_build/` | building the reference database from GenBank: the taxonomy table, the flat-file mine, sketches, record metadata, species consensus, the profile, the taxonomy check, lineage assignment, the tRNA library and truth recuration |
+| `tables/` | curated tables the annotator reads: the tRNA sequence library and boundary conventions, gene synonyms, plastid tRNA identities |
+| `tools/` | format converters and the de novo exon experiment |
+| `test/` | regression harness, truth sets, measured results, `refresh_references.sh` |
+| `conda/recipe/`, `environment.yml` | bioconda recipe and the run-time environment |
 | `third_party/aragorn` | ARAGORN 1.2.41 source |
+| `legacy/` | pre-2026 versions of the pipeline scripts, kept for reference |
+| `refdb/`, `bin/` | the downloaded database and the built ARAGORN binary (not in git) |
 
 ## License
 

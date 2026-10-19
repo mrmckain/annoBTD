@@ -230,7 +230,7 @@ printf STDERR "%s: %d exon rows, %d distinct genes (%d unnamed ORF features skip
             my %builtin = (clpp1 => 'clpP', pafi => 'ycf3', pafii => 'ycf4', pbf1 => 'psbN', lhba => 'psbZ', ycf9 => 'psbZ',
                            psb30 => 'ycf12', tic214 => 'ycf1', ycf10 => 'cemA', ycf5 => 'ccsA', ycf6 => 'petN');
             %syn = %builtin;
-            for my $d (grep { defined } $ENV{ANNOBTD_DIR}, "$FindBin::Bin/..", $FindBin::Bin) {
+            for my $d (grep { defined } ($ENV{ANNOBTD_DIR} ? "$ENV{ANNOBTD_DIR}/tables" : undef), "$FindBin::Bin/../tables", $ENV{ANNOBTD_DIR}, "$FindBin::Bin/..", $FindBin::Bin) {
                 if (open my $fh, "<", "$d/gene_synonyms.tsv") {
                     while (<$fh>) { chomp; next if /^#/ || !/\S/; my ($a, $b) = split /\t/; $syn{lc $a} = $b if $b } close $fh; last }
             }

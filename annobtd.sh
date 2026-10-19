@@ -31,8 +31,8 @@
 #   work/                     the full pipeline run (BLAST, ORFs, logs)
 #
 # Needs: perl 5, BLAST+ (blastn, tblastx, makeblastdb on PATH or BLAST_BIN), curl for
-# fetching guide records from NCBI, and bin/aragorn (built from third_party/aragorn) for
-# tRNA boundaries; without ARAGORN the tRNA steps that need it are skipped.
+# fetching guide records from NCBI, and aragorn (bin/aragorn built from third_party/aragorn,
+# or on PATH from bioconda) for tRNA boundaries; without it those steps are skipped.
 set -uo pipefail
 ANNOBTD_DIR="$(cd "$(dirname "$0")" && pwd)"
 FASTA="${1:?usage: annobtd.sh <plastome.fasta> <prefix> [options]}"; PREFIX="${2:?prefix}"; shift 2
@@ -56,7 +56,7 @@ if [ "$DBMODE" != curated ]; then [ -s "$REFDB/reference_sketches_full.tsv" ] ||
 if [ -n "${BLAST_BIN:-}" ]; then [ -x "$BLAST_BIN/tblastx" ] || { echo "annobtd.sh: no tblastx in BLAST_BIN=$BLAST_BIN" >&2; exit 1; }
 else command -v tblastx >/dev/null && command -v blastn >/dev/null && command -v makeblastdb >/dev/null || { echo "annobtd.sh: BLAST+ (blastn, tblastx, makeblastdb) not on PATH; install it or set BLAST_BIN" >&2; exit 1; }; fi
 command -v curl >/dev/null || { echo "annobtd.sh: curl is needed to fetch guide records from NCBI" >&2; exit 1; }
-[ -x "${ANNOBTD_ARAGORN:-$ANNOBTD_DIR/bin/aragorn}" ] || echo "annobtd.sh: WARNING bin/aragorn not found; tRNA boundary refinement and strand checks are skipped (see third_party/aragorn/README.txt)" >&2
+{ [ -x "${ANNOBTD_ARAGORN:-$ANNOBTD_DIR/bin/aragorn}" ] || command -v aragorn >/dev/null; } || echo "annobtd.sh: WARNING no aragorn (bin/aragorn or on PATH); tRNA boundary refinement and strand checks are skipped (see third_party/aragorn/README.txt)" >&2
 case "$DBMODE" in
     curated) DB="$REFDB/reference_sketches.tsv"; DB2="" ;;
     full)    DB="$REFDB/reference_sketches_full.tsv"; DB2="" ;;
@@ -66,7 +66,7 @@ esac
 # lineage: given, or the majority family/order of the three nearest genomes
 if [ -z "$FAM" ] || [ -z "$ORD" ]; then
     NEAR="${DB2:-$DB}"
-    perl "$ANNOBTD_DIR/select_guides.pl" "$FASTA" "$NEAR" -n 3 --one-per-genus ${EXCL:+--exclude "$EXCL"} > "$WORK/nearest.tsv" 2>/dev/null
+    perl "$ANNOBTD_DIR/guides/select_guides.pl" "$FASTA" "$NEAR" -n 3 --one-per-genus ${EXCL:+--exclude "$EXCL"} > "$WORK/nearest.tsv" 2>/dev/null
     [ -s "$WORK/nearest.tsv" ] || { echo "annobtd.sh: could not rank the genome against $NEAR" >&2; exit 1; }
     [ -z "$FAM" ] && FAM=$(cut -f3 "$WORK/nearest.tsv" | sort | uniq -c | sort -rn | awk 'NR==1{print $2}')
     [ -z "$ORD" ] && ORD=$(cut -f4 "$WORK/nearest.tsv" | sort | uniq -c | sort -rn | awk 'NR==1{print $2}')
@@ -75,18 +75,18 @@ fi
 export ANNOBTD_FAMILY="$FAM" ANNOBTD_ORDER="$ORD" ANNOBTD_GENUS="$GEN"
 export ANNOBTD_PROFILE="$REFDB/gene_expect.tsv" ANNOBTD_LINEAGE_COUNTS="$REFDB/lineage_species_counts.tsv"
 export ANNOBTD_SPECIES_UNITS="$REFDB/species_units.tsv" ANNOBTD_SPECIES_GENES="$REFDB/species_lengths.tsv"
-export ANNOBTD_TRNA_LIBRARY="${ANNOBTD_TRNA_LIBRARY:-$ANNOBTD_DIR/trna_library.fasta}"
+export ANNOBTD_TRNA_LIBRARY="${ANNOBTD_TRNA_LIBRARY:-$ANNOBTD_DIR/tables/trna_library.fasta}"
 [ -n "$EXCL" ] && export ANNOBTD_TRNA_LIBRARY_EXCLUDE="$EXCL"
 # guides
-hyb=$("$ANNOBTD_DIR/choose_guides.sh" "$FASTA" "$WORK" --db "$DB" ${DB2:+--db2 "$DB2"} -n "$NGUIDES" --family "$FAM" --order "$ORD" --genus "$GEN" ${EXCL:+--exclude "$EXCL"} $CONGENERS --refdb "$REFDB") || { echo "annobtd.sh: no guides could be chosen" >&2; exit 2; }
+hyb=$("$ANNOBTD_DIR/guides/choose_guides.sh" "$FASTA" "$WORK" --db "$DB" ${DB2:+--db2 "$DB2"} -n "$NGUIDES" --family "$FAM" --order "$ORD" --genus "$GEN" ${EXCL:+--exclude "$EXCL"} $CONGENERS --refdb "$REFDB") || { echo "annobtd.sh: no guides could be chosen" >&2; exit 2; }
 [ -n "$hyb" ] && echo "$hyb" >&2
 CACHE="$REFDB/gb_cache"; [ -d "$CACHE" ] || { CACHE="$ANNOBTD_DIR/test/gb_cache"; [ -d "$CACHE" ] || CACHE="$OUTDIR/gb_cache"; }
-guides=$("$ANNOBTD_DIR/fetch_guides.sh" "$WORK/ranking.tsv" "$WORK/sequenceFiles" "$WORK/files" "$CACHE" 2>>"$WORK/guides.log")
+guides=$("$ANNOBTD_DIR/guides/fetch_guides.sh" "$WORK/ranking.tsv" "$WORK/sequenceFiles" "$WORK/files" "$CACHE" 2>>"$WORK/guides.log")
 [ -n "$guides" ] || { echo "annobtd.sh: could not fetch the guide records (see $WORK/guides.log)" >&2; exit 2; }
 echo "guides: $(echo "$guides" | tr ',' '\n' | wc -l | tr -d ' ') ($(awk -F'\t' '{printf "%s ", $2}' "$WORK/ranking.tsv"| sed 's/ $//'))" >&2
 cp "$FASTA" "$WORK/target.fsa"
 # annotate
-( cd "$WORK" && ANNOBTD_DIR="$ANNOBTD_DIR" SEQDIR=./sequenceFiles FILEDIR=./files "$ANNOBTD_DIR/run_annotation_pipeline.sh" target.fsa "$guides" "$PREFIX" ) > "$WORK/pipeline.log" 2>&1
+( cd "$WORK" && ANNOBTD_DIR="$ANNOBTD_DIR" SEQDIR=./sequenceFiles FILEDIR=./files "$ANNOBTD_DIR/pipeline/run_annotation_pipeline.sh" target.fsa "$guides" "$PREFIX" ) > "$WORK/pipeline.log" 2>&1
 RESULT="$WORK/${PREFIX}_VERDANT_cleaned_annotation.txt"
 [ -s "$RESULT" ] || { echo "annobtd.sh: the pipeline produced no annotation; see $WORK/pipeline.log" >&2; tail -15 "$WORK/pipeline.log" >&2; exit 3; }
 cp "$RESULT" "$OUTDIR/${PREFIX}_annotation.txt"

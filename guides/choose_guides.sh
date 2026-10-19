@@ -36,7 +36,7 @@
 # _NO_TAXONOMY_CHECK switch a filter off; ANNOBTD_GUIDE_QUALITY / ANNOBTD_MAX_OUTLIERS
 # (3) add the older outlier-count filter when a table is given.
 set -uo pipefail
-ANNOBTD_DIR="$(cd "$(dirname "$0")" && pwd)"
+ANNOBTD_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="${1:?usage: choose_guides.sh <target.fsa> <workdir> --db DB ...}"; WORK="${2:?workdir}"; shift 2
 DB=""; DB2=""; NGUIDES=8; FAM="NA"; ORD="NA"; GEN="NA"; EXCL=""; EXGENUS=""; GENUSOPT="--one-per-genus"; REFDB="${ANNOBTD_REFDB:-$ANNOBTD_DIR/refdb}"
 while [ $# -gt 0 ]; do
@@ -62,9 +62,9 @@ if [ -n "$acc" ] && [ -s "${SPECIES_UNITS:-/dev/null}" ]; then
 fi
 select_from_db() { local DBSEL="$1" SUF="$2"
     if { [ -n "${ANNOBTD_GUIDE_QUALITY:-}" ] && [ -s "$ANNOBTD_GUIDE_QUALITY" ]; } || { [ -s "$GUIDE_LENGTHS" ] && [ -n "$PROFILE" ]; }; then
-        perl "$ANNOBTD_DIR/select_guides.pl" "$TARGET" "$DBSEL" -n $((NGUIDES*${ANNOBTD_CANDIDATES_MULT:-6})) $GENUSOPT ${acc:+--exclude "$acc"} ${EXGENUS:+--exclude-genus "$GEN"} > "$WORK/ranking_raw$SUF.tsv" 2>/dev/null
+        perl "$ANNOBTD_DIR/guides/select_guides.pl" "$TARGET" "$DBSEL" -n $((NGUIDES*${ANNOBTD_CANDIDATES_MULT:-6})) $GENUSOPT ${acc:+--exclude "$acc"} ${EXGENUS:+--exclude-genus "$GEN"} > "$WORK/ranking_raw$SUF.tsv" 2>/dev/null
         if [ -s "$GUIDE_LENGTHS" ] && [ -n "$PROFILE" ]; then
-            perl "$ANNOBTD_DIR/score_guide_consistency.pl" "$WORK/ranking_raw$SUF.tsv" "$FAM" "$ORD" \
+            perl "$ANNOBTD_DIR/guides/score_guide_consistency.pl" "$WORK/ranking_raw$SUF.tsv" "$FAM" "$ORD" \
                  "$PROFILE" "$GUIDE_LENGTHS" "${ANNOBTD_EXPECT_MIN_N:-10}" "${ANNOBTD_EXPECT_MIN_CONSENSUS:-0.90}" > "$WORK/ranking_scored$SUF.tsv"
         else
             awk -F'\t' '{print $0"\t0\t0\tNA\t-"}' "$WORK/ranking_raw$SUF.tsv" > "$WORK/ranking_scored$SUF.tsv"
@@ -93,7 +93,7 @@ select_from_db() { local DBSEL="$1" SUF="$2"
                  printf "%s\t%s\t%s\tjaccard=%s\tcompared=%s\tmismatches=%s\t%s\tspecies=%s\trep=%s\tspecies_mismatch=%s\t%s\n", f[1],f[3],f[4],f[5],f[7],f[8],(pass[i]?"pass":"backfill"),usp[i],urep[i],usm[i],f[10] > PICKS }' \
             PICKS="$WORK/guide_picks$SUF.tsv" "$WORK/ranking_scored$SUF.tsv" > "$WORK/ranking$SUF.tsv"
     else
-        perl "$ANNOBTD_DIR/select_guides.pl" "$TARGET" "$DBSEL" -n "$NGUIDES" $GENUSOPT ${acc:+--exclude "$acc"} ${EXGENUS:+--exclude-genus "$GEN"} > "$WORK/ranking$SUF.tsv" 2>/dev/null
+        perl "$ANNOBTD_DIR/guides/select_guides.pl" "$TARGET" "$DBSEL" -n "$NGUIDES" $GENUSOPT ${acc:+--exclude "$acc"} ${EXGENUS:+--exclude-genus "$GEN"} > "$WORK/ranking$SUF.tsv" 2>/dev/null
         awk -F'\t' '{print $1"\t"$3"\t"$4"\tjaccard="$5"\tcompared=-\tmismatches=-\tpass\tspecies=-\trep=-\tspecies_mismatch=-\t-"}' "$WORK/ranking$SUF.tsv" > "$WORK/guide_picks$SUF.tsv"
     fi
 }
