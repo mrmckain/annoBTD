@@ -7,11 +7,14 @@
 # USAGE: extract_guide_lengths.pl <gb_dir> <accessions.txt> > guide_lengths.tsv
 # OUT:   accession <TAB> name <TAB> exons <TAB> nt      (name = gene or gene_exonN)
 use strict; use warnings;
+# A cached record may be <acc>.gb or <acc>.gb.gz (the cache is gzipped to save disk).
+sub open_gb { my $p = shift; $p = "$p.gz" if !-e $p && -e "$p.gz"; return undef unless -e $p; my $h;
+    if ($p =~ /\.gz$/) { open $h, "-|", "gzip", "-dc", $p or return undef } else { open $h, "<", $p or return undef } return $h }
 my ($dir, $list) = @ARGV; die "usage: $0 <gb_dir> <accessions.txt>\n" unless $list;
 my %want; open my $l, "<", $list or die; while (<$l>) { chomp; s/\r//; $want{$_} = 1 if /\S/ } close $l;
 print join("\t", qw(accession name exons nt)), "\n";
 for my $acc (sort keys %want) {
-    open my $h, "<", "$dir/$acc.gb" or next;
+    my $h = open_gb("$dir/$acc.gb") or next;
     my (@feat, $cur);
     while (<$h>) {
         chomp; last if /^ORIGIN/;

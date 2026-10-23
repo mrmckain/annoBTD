@@ -1,5 +1,8 @@
 #!/usr/bin/perl
 use strict; use warnings;
+# A cached record may be <acc>.gb or <acc>.gb.gz (the cache is gzipped to save disk).
+sub open_gb { my $p = shift; $p = "$p.gz" if !-e $p && -e "$p.gz"; return undef unless -e $p; my $h;
+    if ($p =~ /\.gz$/) { open $h, "-|", "gzip", "-dc", $p or return undef } else { open $h, "<", $p or return undef } return $h }
 # Mine every annotated CDS from a directory of GenBank flat files into a per-gene
 # expectation: what a gene's protein usually looks like, stratified by family.
 #
@@ -35,11 +38,11 @@ sub rc { my $x = reverse shift; $x =~ tr/ACGTacgt/TGCAtgca/; $x }
 open my $R, ">", $rows_out or die;
 print $R join("\t", qw(accession family order gene exons strand prot_len nterm cterm start transl_except)), "\n";
 my (%prof, $nrec, $ncds);
-opendir(my $dh, $dir) or die; my @files = sort grep { /\.gb$/ } readdir $dh; closedir $dh;
+opendir(my $dh, $dir) or die; my @files = sort grep { /\.gb(?:\.gz)?$/ } readdir $dh; closedir $dh;
 for my $f (@files) {
-    (my $acc = $f) =~ s/\.gb$//; (my $base = $acc) =~ s/\.\d+$//;
+    (my $acc = $f) =~ s/\.gb(?:\.gz)?$//; (my $base = $acc) =~ s/\.\d+$//;
     my ($fam, $ord) = @{ $lin{$base} || ['NA', 'NA'] };
-    open my $h, "<", "$dir/$f" or next;
+    my $h = open_gb("$dir/$f") or next;
     my (@feat, $cur, $in_origin, $seq);
     while (<$h>) {
         chomp;

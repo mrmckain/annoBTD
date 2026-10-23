@@ -44,6 +44,7 @@ while IFS=$'\t' read -r acc org fam ord jac rank; do
 
     gb="$CACHE/${acc}.gb"
     fa="$CACHE/${acc}.fsa"
+    [ -s "$gb" ] || { [ -s "$gb.gz" ] && gzip -dc "$gb.gz" > "$gb"; }   # the cache may be gzipped
     if [ ! -s "$gb" ]; then
         curl -sS -m 180 --retry 2 --retry-delay 3 \
             "${EUTILS}?db=nuccore&id=${acc}&rettype=gbwithparts&retmode=text" -o "$gb"

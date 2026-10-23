@@ -11,12 +11,15 @@
 # authors come from the first reference and the affiliation is "-" (fill it from
 # the source record downstream).
 use strict; use warnings;
+# A cached record may be <acc>.gb or <acc>.gb.gz (the cache is gzipped to save disk).
+sub open_gb { my $p = shift; $p = "$p.gz" if !-e $p && -e "$p.gz"; return undef unless -e $p; my $h;
+    if ($p =~ /\.gz$/) { open $h, "-|", "gzip", "-dc", $p or return undef } else { open $h, "<", $p or return undef } return $h }
 my ($dir) = @ARGV; die "usage: $0 <gb_dir>\n" unless $dir;
-opendir(my $dh, $dir) or die; my @files = sort grep { /\.gb$/ } readdir $dh; closedir $dh;
+opendir(my $dh, $dir) or die; my @files = sort grep { /\.gb(?:\.gz)?$/ } readdir $dh; closedir $dh;
 print join("\t", qw(accession organism species source sub_date first_author last_author affiliation)), "\n";
 for my $f (@files) {
-    (my $acc = $f) =~ s/\.gb$//;
-    open my $h, "<", "$dir/$f" or next;
+    (my $acc = $f) =~ s/\.gb(?:\.gz)?$//;
+    my $h = open_gb("$dir/$f") or next;
     my ($org, $source, @refs, $cur, $in_comment, $comment) = ('', '-');
     while (<$h>) {
         chomp; last if /^FEATURES/;

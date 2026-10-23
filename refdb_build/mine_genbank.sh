@@ -8,11 +8,11 @@ set -u
 TAX="$1"; CACHE="$2"; mkdir -p "$CACHE"
 E="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 total=$(awk 'NR>1' "$TAX" | wc -l | tr -d ' ')
-have=$(ls "$CACHE"/*.gb 2>/dev/null | wc -l | tr -d ' ')
+have=$(ls "$CACHE" | grep -c -E '\.gb(\.gz)?$')
 echo "resuming: $have of $total already cached" >&2
 n=0
 awk -F'\t' 'NR>1{print $1}' "$TAX" | while read -r acc; do
-    [ -s "$CACHE/$acc.gb" ] && continue
+    { [ -s "$CACHE/$acc.gb" ] || [ -s "$CACHE/$acc.gb.gz" ]; } && continue
     curl -sS -m 180 --retry 3 "${E}?db=nuccore&id=${acc}&rettype=gbwithparts&retmode=text" -o "$CACHE/$acc.gb.part" \
       && grep -q '^ORIGIN' "$CACHE/$acc.gb.part" && mv "$CACHE/$acc.gb.part" "$CACHE/$acc.gb" \
       || { rm -f "$CACHE/$acc.gb.part"; echo "failed: $acc" >&2; }
