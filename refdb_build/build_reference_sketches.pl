@@ -1,5 +1,8 @@
 #!/usr/bin/perl
 use strict;
+# A cached record may be <acc>.gb or <acc>.gb.gz (the cache is gzipped to save disk).
+sub open_gb { my $p = shift; $p = "$p.gz" if !-e $p && -e "$p.gz"; return undef unless -e $p; my $h;
+    if ($p =~ /\.gz$/) { open $h, "-|", "gzip", "-dc", $p or return undef } else { open $h, "<", $p or return undef } return $h }
 use warnings;
 
 # Build a MinHash sketch database from a taxonomy table of chloroplast accessions.
@@ -80,7 +83,7 @@ for my $r (@todo) {
 
     my $seq = '';
     if ($gb_dir) {
-        if (open my $gh, "<", "$gb_dir/$acc.gb") {
+        if (my $gh = open_gb("$gb_dir/$acc.gb")) {
             my $in = 0;
             while (<$gh>) { if ($in) { last if /^\/\//; s/[^A-Za-z]//g; $seq .= $_ } elsif (/^ORIGIN/) { $in = 1 } }
             close $gh;

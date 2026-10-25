@@ -1,7 +1,7 @@
 #!/bin/bash
 # Batched, resumable GenBank flat-file miner. Fetches BATCH accessions per efetch
 # POST (gbwithparts), splits the response on record terminators, and writes one
-# <accession.version>.gb per record. Skips anything already cached, so it can be
+# <accession.version>.gb per record (already cached records may be gzipped, .gb.gz). Skips anything already cached, so it can be
 # stopped and restarted freely. HTTP/1.1 is forced: HTTP/2 against eutils was
 # producing framing errors and multi-minute stalls.
 #
@@ -12,7 +12,7 @@ mkdir -p "$CACHE"
 E="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 KEY="${NCBI_API_KEY:+&api_key=$NCBI_API_KEY}"
 total=$(awk 'NR>1' "$TAX" | wc -l | tr -d ' ')
-have=$(ls "$CACHE"/*.gb 2>/dev/null | wc -l | tr -d ' ')
+have=$(ls "$CACHE" | grep -c -E '\.gb(\.gz)?$')
 echo "resuming: $have of $total already cached; batch=$BATCH" >&2
 TMP="$CACHE/.batch.$$"; PEND="$TMP.pending"
 trap 'rm -f "$TMP" "$PEND"' EXIT
@@ -36,7 +36,7 @@ split_records() {
 # Pending list goes to a file. Slicing a pipe with head over-reads its buffer
 # and silently discards the rest of the queue.
 awk -F'\t' 'NR>1{print $1}' "$TAX" | while read -r acc; do
-    [ -s "$CACHE/$acc.gb" ] || echo "$acc"
+    [ -s "$CACHE/$acc.gb" ] || [ -s "$CACHE/$acc.gb.gz" ] || echo "$acc"
 done > "$PEND"
 echo "pending: $(wc -l < "$PEND" | tr -d ' ')" >&2
 
@@ -58,7 +58,7 @@ while true; do
     done
     rm -f "$TMP"
     if [ "$got" -lt "$want" ]; then
-        for a in $ids; do [ -s "$CACHE/$a.gb" ] || echo "missing: $a" >&2; done
+        for a in $ids; do [ -s "$CACHE/$a.gb" ] || [ -s "$CACHE/$a.gb.gz" ] || echo "missing: $a" >&2; done
     fi
     done_n=$((done_n+got)); n=$((n+1))
     echo "batch $n: $got/$want  (session total $done_n)" >&2

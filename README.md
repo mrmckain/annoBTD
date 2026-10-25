@@ -125,6 +125,34 @@ Output, in `Mygenus_species_annobtd/`:
 | `<prefix>_checks/` | protein sanity (`check_annotation.tsv`) and splice-site (`check_splice.tsv`) reports |
 | `work/` | the complete run: BLAST output, ORFs, pipeline log |
 
+### Checking the result feature by feature
+
+```bash
+perl tools/validate_annotation.pl Mygenus_species_annobtd/Mygenus_species_annotation.txt my_plastome.fasta \
+     --guides-dir Mygenus_species_annobtd/work/files --guide-seqs Mygenus_species_annobtd/work/sequenceFiles \
+     --family Poaceae --order Poales [--genus Mygenus] [--val upload_files/Mygenus_species.val] --out validation.tsv
+```
+
+One row per CDS, tRNA and rRNA. A feature that agrees with the lineage profile,
+the guides' copies of the gene and its own translation is `PASS`. Anything else
+is re-derived from the guide protein with tblastn and given one of three verdicts:
+`ARTIFACT` (the sequence carries a canonical form the annotator missed: a start
+one codon off, an exon boundary within 3 nt, a start over-extended into the
+neighbouring gene, a remnant copy at the IR boundary; the fix is given in
+`tools/verdant_edit.pl` format), `REAL` (the guide protein aligns in two frames,
+stops early, or part of the gene is gone: a pseudogene call with the evidence) or
+`UNRESOLVED` (ambiguity codes in the span, an IR boundary inside the gene, an exon
+that cannot be placed: look at the assembly). Canonical genes the guides carry but
+the annotation lacks are tested the same way. With `--val`, table2asn's validator
+messages for the same features are attached. `test/validate_truth.sh` scores the
+verdicts against a project's hand edits (see `test/README.md`).
+
+### Submitting to GenBank
+
+`tools/annobtd2tbl.pl` writes the feature table and the modifier-bearing FASTA
+that table2asn takes, translating every CDS first (`--check`); `tools/verdant_edit.pl`
+applies hand edits (rename, move, add, delete) and rebuilds the spacer rows.
+
 ## Layout
 
 | | |

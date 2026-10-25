@@ -619,12 +619,18 @@ my $irb_end = substr($plastome, $i, 20);
 $irb_end = reverse($irb_end);
 $irb_end =~ tr/ATCGatcg/TAGCtagc/;
 
-until($plastome !~ /$irb_end/){
+# Walk until the 20-mer's reverse complement no longer occurs, but stop at the end of
+# the sequence: an assembly whose inverted repeat runs to its last base (a terminal
+# inverted duplication) made substr return an empty pattern, which matches anything,
+# and this loop ran forever, writing two warnings per turn to the log (56 GB).
+my $plen = length $plastome;
+until ($i + 20 > $plen || length($irb_end) < 20 || $plastome !~ /$irb_end/) {
 	$i++;
 	$irb_end = substr($plastome, $i, 20);
 	$irb_end = reverse($irb_end);
 	$irb_end =~ tr/ATCGatcg/TAGCtagc/;
 }
+warn "IR boundary search ran to the end of the sequence: the inverted repeat reaches the last base; region rows will be unreliable\n" if $i + 20 > $plen;
 $i--;
 $irb_end = substr($plastome, $i, 20);
 $irb = substr($plastome, $start_irb, ($i+20-$start_irb));

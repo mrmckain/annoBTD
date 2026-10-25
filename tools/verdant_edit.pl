@@ -20,7 +20,8 @@ while (<$h>) { chomp; next unless /\S/; my @f = split /\t/; next if $f[0] =~ /~/
 my ($applied, $missed) = (0, 0); open my $e, "<", $edits or die "$edits: $!";
 while (<$e>) { chomp; next if /^#/ || !/\S/; my @f = split /\t/; shift @f unless $f[0] =~ /^(rename|add|delete|move)$/;   # optional leading genome column
     my ($act, $name, $s, $e2, @x) = @f;
-    if ($act eq 'add') { push @rows, [$name, $s, $e2, $x[0]]; $applied++; next }
+    if ($act eq 'add') { if (grep { $_->[0] eq $name && $_->[1] == $s && $_->[2] == $e2 && $_->[3] eq $x[0] } @rows) { $missed++; next }   # already there: an add is idempotent
+        push @rows, [$name, $s, $e2, $x[0]]; $applied++; next }
     my ($i) = grep { $rows[$_][0] eq $name && $rows[$_][1] == $s && $rows[$_][2] == $e2 } 0 .. $#rows;
     unless (defined $i) { warn "no row $name $s-$e2 in $ann\n"; $missed++; next }
     if ($act eq 'rename') { $rows[$i][0] = $x[0] } elsif ($act eq 'delete') { splice @rows, $i, 1 } elsif ($act eq 'move') { ($rows[$i][1], $rows[$i][2]) = @x[0, 1] }

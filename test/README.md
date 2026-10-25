@@ -458,6 +458,36 @@ Two of the losses are artifacts of the comparison rather than the method:
 which is about as close as a guide can get, while the sketched subset here is only
 486 of the 7,912 available. Building the full database should recover those.
 
+## Per-feature validation against the hand edits
+
+`tools/validate_annotation.pl` gives every feature a verdict (PASS, ARTIFACT, REAL,
+UNRESOLVED; see the main README). `validate_truth.sh <project> --family F --order O`
+runs it over a project's genomes on the annotator's own output (`work/*_VERDANT_cleaned_annotation.txt`,
+before any hand edit) and `score_validation.pl` compares the verdicts with the
+project's `manual_edits.tsv`: a rename to `_pseudogene` or an added pseudogene
+should come back REAL, a delete or a move ARTIFACT, and every verdict that is not
+PASS should correspond to a hand edit.
+
+Measured on the Manfreda project (91 Asparagaceae plastomes, 83 hand edits,
+2026-10-23): 81 of 83 edits found with the right verdict. The two not found are
+Camassia ndhK, where the 855 nt call is itself intact and a guide carries that
+length (the hand edit standardized it to 678), and the rps19 of Agave hurteri,
+which the validator rightly leaves UNRESOLVED because the remnant ends at the IR
+boundary. Verdicts without a hand edit were themselves correct and became edits:
+ndhF frameshifted in Agave xyloncantha, infA frameshifted in Yucca aloifolia, the
+rpl2 and ndhD starts of Dasylirion and Hosta extended one to four codons past the
+conventional ACG. One hand edit was withdrawn by the run: Chlorogalum
+pomeridianum HPO15 infA is an open 240 nt frame, not a pseudogene.
+
+Two findings shaped the rules. A frameshift inside a poly-A run is invisible to
+tblastn (the protein aligns straight through it, Schoenolirion rps19), so a
+re-derived ORF is accepted only from ATG or GTG, ACG only for ndhD, psbL, rpl2 and
+psbC, and a canonical start that sits out of frame with the aligned body within
+15 nt is reported as a frameshift. And an ndhK that overlaps ndhC by 121 nt is
+intact and in frame with the 2016 records that annotate it that way; the overlap
+rule (same-strand overlap > 60 nt with an in-frame ATG downstream giving a length
+the lineage profile carries) is what catches it.
+
 ## Quality checks
 
 Two scripts diagnose an annotation without needing a truth set, so they work on

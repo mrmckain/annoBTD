@@ -4,7 +4,7 @@
 # Everything the regression harness and the annotation pipeline read besides the
 # scripts themselves is derived from two sources: the taxonomy table of every
 # complete plastome in GenBank (refdb/taxonomy_all.tsv) and the flat-file cache
-# (gb_cache/, one <accession.version>.gb per record). This script re-derives the
+# (gb_cache/, one <accession.version>.gb or .gb.gz per record; the cache is kept gzipped). This script re-derives the
 # rest, in dependency order, into a staging directory, and installs the staged
 # set into the reference database directory (../refdb, or ANNOBTD_REFDB) only when
 # asked. The previous set moves to archive/refs_<date>/ so a regression can be rerun
@@ -90,7 +90,7 @@ rows() { [ -s "$1" ] && tail -n +2 "$1" | wc -l | tr -d ' ' || echo 0; }
 
 [ -s "$TAX" ]  || die "no taxonomy table at $TAX (build_taxonomy_all.pl)"
 [ -d "$CACHE" ] || die "no flat-file cache at $CACHE (mine_genbank_batch.sh)"
-say "refresh: taxonomy $(rows "$TAX") rows, cache $(ls "$CACHE" | grep -c '\.gb$') records, sketches $(rows "$SKETCH"), staging $STAGE"
+say "refresh: taxonomy $(rows "$TAX") rows, cache $(ls "$CACHE" | grep -c -E '\.gb(\.gz)?$') records, sketches $(rows "$SKETCH"), staging $STAGE"
 
 # ---- taxonomy: new accessions in GenBank --------------------------------------
 if wanted taxonomy; then
@@ -103,12 +103,12 @@ fi
 if wanted mine; then
     say "[mine] mine_genbank_batch.sh (skips cached records)"
     bash "$ANNOBTD_DIR/refdb_build/mine_genbank_batch.sh" "$TAX" "$CACHE" 2>&1 | tail -3 | tee -a "$LOG" >&2
-    say "[mine] cache now $(ls "$CACHE" | grep -c '\.gb$') records"
+    say "[mine] cache now $(ls "$CACHE" | grep -c -E '\.gb(\.gz)?$') records"
 fi
 
 # Accessions the derived tables are built from: in the taxonomy table AND cached.
 ACC="$STAGE/accessions.txt"
-awk -F'\t' 'NR>1{sub(/\r$/,"",$1); print $1}' "$TAX" | while read -r a; do [ -s "$CACHE/$a.gb" ] && echo "$a"; done | sort > "$ACC"
+awk -F'\t' 'NR>1{sub(/\r$/,"",$1); print $1}' "$TAX" | while read -r a; do { [ -s "$CACHE/$a.gb" ] || [ -s "$CACHE/$a.gb.gz" ]; } && echo "$a"; done | sort > "$ACC"
 say "accessions with a cached record: $(wc -l < "$ACC" | tr -d ' ') of $(rows "$TAX") in the taxonomy table"
 [ -s "$ACC" ] || die "nothing to build from"
 
