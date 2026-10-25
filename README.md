@@ -172,4 +172,4 @@ applies hand edits (rename, move, add, delete) and rebuilds the spacer rows.
 
 ## License
 
-GPL v3 (see `LICENSE.txt`). ARAGORN is GPL v3, by Dean Laslett and Bjorn Canback.
+GNU Affero General Public License v3 (AGPL-3.0, see `LICENSE.txt`). The vendored ARAGORN source in `third_party/aragorn` keeps its own GPL v3 license (Dean Laslett and Bjorn Canback); GPL v3 and AGPL v3 are compatible.
