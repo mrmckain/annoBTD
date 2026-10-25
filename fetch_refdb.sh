@@ -26,6 +26,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --version) VERSION="$2"; shift 2 ;; --url) URL="$2"; shift 2 ;; --dir) DIR="$2"; shift 2 ;;
         --build) BUILD=1; VERSION="$2"; shift 2 ;; --out) OUT="$2"; shift 2 ;;
+        -h|--help) sed -n '4,5p' "$0" | sed 's/^# *//'; exit 0 ;;
         *) echo "fetch_refdb.sh: unknown option $1" >&2; exit 1 ;;
     esac
 done
