@@ -34,8 +34,11 @@ test:
 
 about:
   home: https://github.com/mrmckain/annoBTD
-  license: GPL-3.0-or-later
+  license: AGPL-3.0-only
   license_file: LICENSE.txt
+  license_family: AGPL
+  dev_url: https://github.com/mrmckain/annoBTD
+  doc_url: https://github.com/mrmckain/annoBTD#readme
   summary: Plastid genome annotation from GenBank guide genomes, with boundaries settled by lineage conventions
   description: |
     annoBTD annotates plastid (chloroplast) genomes from GenBank guide genomes chosen
