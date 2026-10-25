@@ -44,7 +44,8 @@ while IFS=$'\t' read -r acc org fam ord jac rank; do
 
     gb="$CACHE/${acc}.gb"
     fa="$CACHE/${acc}.fsa"
-    [ -s "$gb" ] || { [ -s "$gb.gz" ] && gzip -dc "$gb.gz" > "$gb"; }   # the cache may be gzipped
+    # the cache may be gzipped: expand into a scratch file beside the guides, not into the cache
+    if [ ! -s "$gb" ] && [ -s "$gb.gz" ]; then gb="$SEQDIR/.${acc}.gb"; gzip -dc "$CACHE/${acc}.gb.gz" > "$gb"; fi
     if [ ! -s "$gb" ]; then
         curl -sS -m 180 --retry 2 --retry-delay 3 \
             "${EUTILS}?db=nuccore&id=${acc}&rettype=gbwithparts&retmode=text" -o "$gb"
@@ -71,5 +72,6 @@ while IFS=$'\t' read -r acc org fam ord jac rank; do
     echo "  guide $rank: $name ($fam, jaccard $jac)" >&2
 done < "$RANKING"
 
+rm -f "$SEQDIR"/.*.gb
 [ -n "$guides" ] || { echo "ERROR: no guides could be prepared" >&2; exit 1; }
 echo "$guides"
