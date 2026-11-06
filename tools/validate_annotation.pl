@@ -115,7 +115,7 @@ sub overlap_other { my ($key, $s, $e, $d) = @_; my ($best, $who) = (0, ''); for 
 my $tmpdir; sub hsps { my ($g, $s, $e, $d) = @_; my ($gname, $prot, $glen) = guide_protein($g); return () unless $prot;
     require File::Temp; $tmpdir //= File::Temp::tempdir(CLEANUP => 1); open my $q, ">", "$tmpdir/q.fa" or die; print $q ">$g\n$prot\n"; close $q;
     my @h = map { chomp; my @f = split /\t/; { ss => $f[0] < $f[1] ? $f[0] : $f[1], se => $f[0] < $f[1] ? $f[1] : $f[0], frame => $f[2], pid => $f[3], alen => $f[4], qs => $f[5], qe => $f[6], ev => $f[7], d => ($f[2] < 0 ? '-' : '+') } }
-        `$tblastn -query $tmpdir/q.fa -subject @{[blast_genome()]} -outfmt '6 sstart send sframe pident length qstart qend evalue' -evalue 1e-3 2>/dev/null`;
+        `$tblastn -query $tmpdir/q.fa -subject @{[blast_genome()]} -seg no -outfmt '6 sstart send sframe pident length qstart qend evalue' -evalue 1e-3 2>/dev/null`;
     @h = grep { $_->{pid} >= 50 && $_->{alen} >= 12 } @h;
     if (defined $s) { @h = grep { $_->{d} eq $d && $_->{se} >= $s - $o{window} && $_->{ss} <= $e + $o{window} } @h }
     return (\@h, length $prot, $gname, $glen) }

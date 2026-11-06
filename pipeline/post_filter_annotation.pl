@@ -283,7 +283,7 @@ if ($o{'guide-seqs'} && -d $o{'guide-seqs'} && %gcds && $seq && !$o{'no-rescue'}
                 ($gname, $gprot, $glen) = ($g, $p, length $x); last }
             next unless $gprot;
             open my $qf, ">", "$dir/q.fa" or die; print $qf ">$gene\n$gprot\n"; close $qf;
-            my $bg = blast_genome(); my @h = map { chomp; [split /\t/] } `$tblastn -query $dir/q.fa -subject $bg -outfmt '6 sstart send sframe pident length qstart qend evalue' 2>/dev/null`;
+            my $bg = blast_genome(); my @h = map { chomp; [split /\t/] } `$tblastn -query $dir/q.fa -subject $bg -seg no -outfmt '6 sstart send sframe pident length qstart qend evalue' 2>/dev/null`;
             my ($best) = sort { $a->[7] <=> $b->[7] || $b->[4] <=> $a->[4] } grep { $_->[3] >= 80 && $_->[4] >= 0.9 * length($gprot) && $_->[7] <= 1e-3 } @h;   # coverage and identity carry the decision; a 34 aa psbM cannot reach a strict e-value
             unless ($best) { printf $log "RESCUE\tno %s: carried by %d of %d guides, no full-length hit in the genome (%s)\n", $gene, scalar @carriers, $nguides, (@h ? sprintf("best %.0f%% over %d of %d aa", $h[0][3], $h[0][4], length $gprot) : 'nothing'); next }
             my $d = $best->[2] < 0 ? '-' : '+'; my ($hs, $he) = sort { $a <=> $b } ($best->[0], $best->[1]);
