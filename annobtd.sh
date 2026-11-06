@@ -80,7 +80,13 @@ export ANNOBTD_TRNA_LIBRARY="${ANNOBTD_TRNA_LIBRARY:-$ANNOBTD_DIR/tables/trna_li
 # guides
 hyb=$("$ANNOBTD_DIR/guides/choose_guides.sh" "$FASTA" "$WORK" --db "$DB" ${DB2:+--db2 "$DB2"} -n "$NGUIDES" --family "$FAM" --order "$ORD" --genus "$GEN" ${EXCL:+--exclude "$EXCL"} $CONGENERS --refdb "$REFDB") || { echo "annobtd.sh: no guides could be chosen" >&2; exit 2; }
 [ -n "$hyb" ] && echo "$hyb" >&2
-CACHE="$REFDB/gb_cache"; [ -d "$CACHE" ] || { CACHE="$ANNOBTD_DIR/test/gb_cache"; [ -d "$CACHE" ] || CACHE="$OUTDIR/gb_cache"; }
+# guide records are cached where every run shares them: the database's gb_cache, else an existing test/gb_cache
+# (the mined GenBank cache), else a new gb_cache beside the database; a read-only database falls back to the run's own
+CACHE="$REFDB/gb_cache"
+if [ ! -d "$CACHE" ]; then
+    if [ -d "$ANNOBTD_DIR/test/gb_cache" ]; then CACHE="$ANNOBTD_DIR/test/gb_cache"
+    elif ! { mkdir -p "$CACHE" 2>/dev/null && [ -w "$CACHE" ]; }; then CACHE="$OUTDIR/gb_cache"; fi
+fi
 guides=$("$ANNOBTD_DIR/guides/fetch_guides.sh" "$WORK/ranking.tsv" "$WORK/sequenceFiles" "$WORK/files" "$CACHE" 2>>"$WORK/guides.log")
 [ -n "$guides" ] || { echo "annobtd.sh: could not fetch the guide records (see $WORK/guides.log)" >&2; exit 2; }
 echo "guides: $(echo "$guides" | tr ',' '\n' | wc -l | tr -d ' ') ($(awk -F'\t' '{printf "%s ", $2}' "$WORK/ranking.tsv"| sed 's/ $//'))" >&2

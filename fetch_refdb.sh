@@ -42,7 +42,9 @@ if [ -n "$BUILD" ]; then
     { echo "version	$VERSION"; echo "built	$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; echo "records	$(($(wc -l < taxonomy_all.tsv) - 1)) complete plastomes in taxonomy_all.tsv"; echo "sketches	$(wc -l < reference_sketches_full.tsv | tr -d ' ') in reference_sketches_full.tsv, $(wc -l < reference_sketches.tsv | tr -d ' ') curated in reference_sketches.tsv"; echo "species	$(awk -F'\t' 'NR>1 && $8==1' species_units.tsv | wc -l | tr -d ' ') species representatives in species_units.tsv"; } > VERSION
     mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
     echo "packing $DIR -> $OUT/$NAME" >&2
-    tar -czf "$OUT/$NAME" MANIFEST.tsv VERSION $FILES || exit 1
+    # macOS tar would store extended attributes (com.apple.provenance) that GNU tar warns about
+    notags=""; tar --version 2>/dev/null | grep -q bsdtar && notags="--no-xattrs --no-mac-metadata"
+    COPYFILE_DISABLE=1 tar $notags -czf "$OUT/$NAME" MANIFEST.tsv VERSION $FILES || exit 1
     ( cd "$OUT" && sha "$NAME" > "$NAME.sha256" && ls -la "$NAME" "$NAME.sha256" >&2 )
     echo "publish: create a GitHub release tagged refdb-$VERSION on mrmckain/annoBTD and attach $NAME and $NAME.sha256" >&2
     exit 0
@@ -56,7 +58,9 @@ curl -fL --retry 3 -C - -o "$TMP/$NAME" "$URL/$NAME" || { echo "fetch_refdb.sh: 
 want=$(cut -d' ' -f1 "$TMP/$NAME.sha256"); have=$(sha "$TMP/$NAME")
 [ "$want" = "$have" ] || { echo "fetch_refdb.sh: checksum mismatch (expected $want, got $have); not installing" >&2; exit 1; }
 echo "checksum ok; unpacking into $DIR" >&2
-tar -xzf "$TMP/$NAME" -C "$DIR" || exit 1
+# bundles packed on macOS may carry extended-attribute headers; GNU tar need not warn about them
+quiet=""; tar --version 2>/dev/null | grep -q 'GNU tar' && quiet="--warning=no-unknown-keyword"
+tar $quiet -xzf "$TMP/$NAME" -C "$DIR" || exit 1
 rm -rf "$TMP"
 bad=0; while IFS=$'\t' read -r f bytes rows sum; do [ "$f" = file ] && continue; [ "$(sha "$DIR/$f")" = "$sum" ] || { echo "  $f: checksum differs from the manifest" >&2; bad=1; }; done < "$DIR/MANIFEST.tsv"
 [ $bad = 0 ] && { echo "reference database $VERSION installed in $DIR:" >&2; sed 's/^/  /' "$DIR/VERSION" >&2; } || exit 1

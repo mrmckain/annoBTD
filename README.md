@@ -14,7 +14,20 @@ reproduce them are in [test/README.md](test/README.md).
 
 annoBTD is Perl and Bash and needs no Perl modules beyond the core distribution.
 
-**With conda** (BLAST+ and ARAGORN come from bioconda):
+**From bioconda** (installs the commands `annobtd` and `annobtd-fetch-refdb`, with BLAST+ and ARAGORN):
+
+```bash
+conda create -n annobtd -c conda-forge -c bioconda annobtd
+conda activate annobtd
+annobtd-fetch-refdb                 # reference database, ~310 MB download, into the environment
+annobtd plastome.fasta PREFIX       # the same options as annobtd.sh below
+```
+
+Set `ANNOBTD_REFDB=/some/dir` before `annobtd-fetch-refdb` and `annobtd` to keep the database
+outside the environment. Guide records downloaded from NCBI are cached in the database
+directory (`gb_cache/`), so every run shares them.
+
+**From a clone, with conda for the dependencies**:
 
 ```bash
 git clone https://github.com/mrmckain/annoBTD.git
@@ -47,8 +60,8 @@ BLAST+ must be on `PATH`, or set `BLAST_BIN=/path/to/ncbi-blast/bin`. ARAGORN
 and is also taken from `PATH` if it is installed there; without it the annotator
 still runs but skips the tRNA boundary and strand checks that depend on it.
 
-A bioconda recipe (`conda/recipe/`) installs annoBTD itself as the commands
-`annobtd` and `annobtd-fetch-refdb`; it is ready to submit once a release is tagged.
+`conda/recipe/` is the source of the bioconda recipe; a new release is a tag plus a
+version and checksum update there and in bioconda-recipes.
 
 Check the install with the built-in regression, which annotates one of the nine
 test genomes from the other eight and scores it against its GenBank record (about a
