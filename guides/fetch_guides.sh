@@ -73,5 +73,7 @@ while IFS=$'\t' read -r acc org fam ord jac rank; do
 done < "$RANKING"
 
 rm -f "$SEQDIR"/.*.gb
+# guide genes that GenBank names wrongly (e.g. psbJ annotated as a second psaJ) take the name the other guides give them
+perl "$HERE/relabel_guides.pl" "$FILEDIR" "$SEQDIR" >&2 || echo "  WARNING: relabel_guides.pl failed; guide names not checked" >&2
 [ -n "$guides" ] || { echo "ERROR: no guides could be prepared" >&2; exit 1; }
 echo "$guides"
