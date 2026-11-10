@@ -156,7 +156,18 @@ neighbouring gene, a remnant copy at the IR boundary; the fix is given in
 stops early, or part of the gene is gone: a pseudogene call with the evidence) or
 `UNRESOLVED` (ambiguity codes in the span, an IR boundary inside the gene, an exon
 that cannot be placed: look at the assembly). Canonical genes the guides carry but
-the annotation lacks are tested the same way. With `--val`, table2asn's validator
+the annotation lacks are tested the same way.
+
+Starts get two rules. A rare start codon (TTG, ATA, ...) is kept only when at least
+half of the guides carrying the gene begin their own copy with it; otherwise the
+start moves to the in-frame ATG where the other guides' N-termini align. And a
+gene whose ATG is followed by a homopolymer run that is not a multiple of 3 (cemA
+in the Liliaceae: 9 to 25 A after the ATG, varying even within *Lilium*) is called
+whole, from that ATG to the stop, so its length is not a multiple of 3. The
+validator reports it `UNRESOLVED` (confirm the run's length in the reads), and
+`tools/annobtd2tbl.pl` writes it as a gene with /pseudo and a note. Older calls of
+such a gene at an internal ATG or an upstream TTG/ATA/AAT come out `ARTIFACT`, with
+the move to the whole gene as the fix. With `--val`, table2asn's validator
 messages for the same features are attached. `test/validate_truth.sh` scores the
 verdicts against a project's hand edits (see `test/README.md`).
 

@@ -80,7 +80,10 @@ for my $g (sort grep { !/^\./ } readdir $gdir) { open my $gh, "<", "$o{'guides-d
         my (@alll, @starts); my $gs = guide_seq($g);
         for my $grp (@groups) { my $l = 0; $l += $_->[1] - $_->[0] + 1 for @$grp; push @alll, $l;
             if ($gs && $base !~ /^(trn|rrn)/) { my ($s0, $e0) = ($grp->[0][0], $grp->[-1][1]); push @starts, $d eq '-' ? rc(substr($gs, $e0 - 3, 3)) : substr($gs, $s0 - 1, 3) } }
-        if ($gd{$base}{$g}) { push @{ $gd{$base}{$g}{alllens} }, @alll; push @{ $gd{$base}{$g}{allstarts} }, @starts; next }   # the other strand's copies: keep their lengths and starts
+        # the other strand's copies: keep their lengths and starts, and the longer copy as the guide's own (a ycf1
+        # straddling the IR has a full copy on one strand and a fragment on the other; hash order used to pick one)
+        if (my $old = $gd{$base}{$g}) { push @{ $old->{alllens} }, @alll; push @{ $old->{allstarts} }, @starts;
+            @$old{qw(d ex len nex type)} = ($d, [map { [$_->[0], $_->[1]] } @$best], $L, scalar @$best, $best->[0][3]) if $L > $old->{len} || ($L == $old->{len} && $d eq '+' && $old->{d} eq '-'); next }
         $gd{$base}{$g} = { d => $d, ex => [map { [$_->[0], $_->[1]] } @$best], len => $L, nex => scalar @$best, type => $best->[0][3], alllens => \@alll, allstarts => \@starts } } }
 closedir $gdir;
 sub guide_seq { my $g = shift; return $gseq{$g} if exists $gseq{$g}; my $s = ''; if (open my $h, "<", "$o{'guide-seqs'}/$g") { while (<$h>) { next if /^>/; s/\s//g; $s .= uc $_ } close $h } $gseq{$g} = $s }
@@ -89,6 +92,45 @@ sub carriers { my $g = shift; $gd{$g} ? scalar keys %{ $gd{$g} } : 0 }
 sub guide_len  { my $g = shift; $gd{$g} ? mode(map { $_->{len} } values %{ $gd{$g} }) : undef }
 sub guide_nex  { my $g = shift; $gd{$g} ? mode(map { $_->{nex} } values %{ $gd{$g} }) : undef }
 my %gprot;
+# Smith-Waterman (match 2, mismatch -1, gap -2) of a guide's N-terminal peptide against a translated window of
+# the target: the score, and where the guide's first residue falls in the window (as in post_filter_annotation.pl)
+sub nterm_anchor { my ($g, $t) = @_; my ($best, $bi, $bj) = (0, 0, 0); my (@H, @P);
+    for my $i (0 .. length $g) { $H[$i][0] = 0 } for my $j (0 .. length $t) { $H[0][$j] = 0 }
+    for my $i (1 .. length $g) { for my $j (1 .. length $t) { my $m = substr($g, $i - 1, 1) eq substr($t, $j - 1, 1) && substr($t, $j - 1, 1) ne '*' ? 2 : -1;
+        my @o = (0, $H[$i - 1][$j - 1] + $m, $H[$i - 1][$j] - 2, $H[$i][$j - 1] - 2); my $k = 0; for (1 .. 3) { $k = $_ if $o[$_] > $o[$k] }
+        $H[$i][$j] = $o[$k]; $P[$i][$j] = $k; ($best, $bi, $bj) = ($o[$k], $i, $j) if $o[$k] > $best } }
+    my ($i, $j) = ($bi, $bj); while ($i > 0 && $j > 0 && $H[$i][$j] > 0) { my $k = $P[$i][$j]; last unless $k; if ($k == 1) { $i--; $j-- } elsif ($k == 2) { $i-- } else { $j-- } }
+    return ($best, $j - $i) }
+# the N-terminal 30 aa of every guide copy of gene g that begins ATG or GTG
+sub guide_nterms { my $g = shift; my @p; for my $name (sort keys %{ $gd{$g} || {} }) { my $r = $gd{$g}{$name}; my $gs = guide_seq($name) or next;
+        my $x = ''; for my $e (sort { $a->[0] <=> $b->[0] } @{ $r->{ex} }) { $x .= substr($gs, $e->[0] - 1, $e->[1] - $e->[0] + 1) } $x = rc($x) if $r->{d} eq '-';
+        my $c = substr($x, 0, 3); push @p, 'M' . substr(translate(substr($x, 3, 87)), 0, 29) if $c eq 'ATG' || $c eq 'GTG' } @p }
+# A start put out of frame by a homopolymer run (post_filter_annotation.pl section 4b; Liliaceae cemA,
+# an ATG followed by 9 to 25 A). For a call in frame with its stop: (new s, new e, length, run length,
+# run base, anchors) when the guides' N-termini put the start where the call's frame has no ATG/GTG,
+# an ATG sits out of frame within 6 nt, a run of >= 7 identical bases starts within 45 nt after it,
+# and the whole span is within 9 nt of a guide copy's length.
+sub hp_shift { my ($s, $e, $d, $g) = @_; return () if ($e - $s + 1) % 3; my @peps = guide_nterms($g); return () unless @peps && 2 * @peps >= carriers($g);
+    my $avail = $d eq '+' ? $s - 1 : $len - $e; my $up = $avail < 450 ? $avail - $avail % 3 : 450; return () if $up < 30;
+    my ($xs, $xe) = $d eq '+' ? ($s - $up, $e) : ($s, $e + $up); my $x = spliced($d, [$xs, $xe]);
+    return () unless substr($x, 0, $up + 90) =~ /A{7}|C{7}|G{7}|T{7}/;
+    my $win = translate(substr($x, 0, $up + 90)); my @anch; for my $gp (@peps) { my ($sc, $at) = nterm_anchor($gp, $win); push @anch, $at if $sc >= 20 } return () unless @anch;
+    my $A = (sort { $a <=> $b } @anch)[$#anch / 2];
+    for my $k ($A - 3 .. $A + 3) { next if $k < 0; return () if init_ok(substr($x, 3 * $k, 3), $g) }
+    my ($o) = sort { abs($a - 3 * $A) <=> abs($b - 3 * $A) || $a <=> $b } grep { $_ >= 0 && ($_ - 3 * $A) % 3 && substr($x, $_, 3) eq 'ATG' } (3 * $A - 6 .. 3 * $A + 6);
+    return () unless defined $o;
+    return () unless substr($x, $o + 3, 52) =~ /(A{7,}|C{7,}|G{7,}|T{7,})/; my ($run, $rp) = ($1, $-[0]); return () if $rp > 45;
+    my $NL = length($x) - $o; return () unless grep { my $c = $_; grep { abs($NL - $_) <= 9 } @{ $c->{alllens} } } values %{ $gd{$g} };
+    my ($ns, $ne) = $d eq '+' ? ($xs + $o, $e) : ($s, $xe - $o);
+    return ($ns, $ne, $NL, length $run, substr($run, 0, 1), scalar @anch) }
+# The same gene already called whole: an ATG start, a length that is not a multiple of 3, a run of >= 7
+# within 45 nt after the ATG, the body open in the stop's frame after the run, a guide copy's length.
+# Returns (run length, run base, run position in the CDS).
+sub hp_framed { my ($x, $g) = @_; my $L = length $x; return () unless $L % 3 && substr($x, 0, 3) eq 'ATG';
+    return () unless substr($x, 3, 52) =~ /(A{7,}|C{7,}|G{7,}|T{7,})/; my ($run, $rp) = ($1, $-[0] + 3); return () if $rp > 48;
+    my $p = $rp + length $run; $p++ while ($L - $p) % 3; my $body = translate(substr($x, $p)); return () unless substr($body, -1) eq '*' && index($body, '*') == length($body) - 1;
+    return () unless $gd{$g} && grep { my $c = $_; grep { abs($L - $_) <= 9 } @{ $c->{alllens} } } values %{ $gd{$g} };
+    return (length $run, substr($run, 0, 1), $rp + 1) }
 sub guide_protein { my $g = shift; return @{ $gprot{$g} } if $gprot{$g}; for my $name (sort keys %{ $gd{$g} || {} }) { my $r = $gd{$g}{$name}; my $gs = guide_seq($name) or next;
         my $x = ''; for my $e (sort { $a->[0] <=> $b->[0] } @{ $r->{ex} }) { $x .= substr($gs, $e->[0] - 1, $e->[1] - $e->[0] + 1) } $x = rc($x) if $r->{d} eq '-';
         my $p = translate($x); $p =~ s/\*$//; next if $p =~ /\*/ || length($p) < 20; $gprot{$g} = [$name, $p, $r->{len}]; return @{ $gprot{$g} } } $gprot{$g} = []; () }
@@ -205,9 +247,31 @@ for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d});
     # a second, much shorter copy of a gene another copy carries in full: the IR-boundary remnant
     my $other_full = 0; for my $k (keys %feat) { next if $k eq $key; my $o2 = $feat{$k}; next unless $o2->{gene} eq $g; my $L2 = 0; $L2 += $_->[1] - $_->[0] + 1 for @{ $o2->{ex} }; $other_full = 1 if $L2 > 1.5 * $L && abs($L2 - $want) <= 0.1 * $want }
     push @fl, "partial second copy" if $other_full && $L < 0.5 * $want;
+    # a start put out of frame by a homopolymer run: called whole it is UNRESOLVED; called anywhere else
+    # (an internal ATG, an upstream TTG/ATA/AAT in the body's frame) it moves to the whole gene
+    if (@ex == 1 && $gd{$g} && !$f->{pseudo}) {
+        if (my ($rl, $rb, $rp) = hp_framed($cds, $g)) { emit(rowname($f), $s, $e, $d, 'UNRESOLVED', join('; ', (grep { !/terminal stop|internal stop/ } @fl), "start frameshifted by a run of $rl $rb"),   # the stops are the start's frame read past the run
+                "the CDS runs from the ATG the guides start $g at to the stop: a run of $rl $rb at CDS position $rp puts that ATG out of frame with the body (the run's length differs between plastomes of the lineage; when it is a multiple of 3 the gene is intact). Whether slippage on the run restores the frame, translation begins at a downstream ATG, or $g is a pseudogene cannot be told from the sequence: confirm the run's length in the reads; for GenBank the CDS needs /pseudo or a /ribosomal_slippage join"); next }
+        if (my ($ns, $ne, $NL, $rl, $rb, $na) = hp_shift($s, $e, $d, $g)) { emit(rowname($f), $s, $e, $d, 'ARTIFACT', join('; ', @fl, "start frameshifted by a run of $rl $rb"),
+                "the ATG at " . ($d eq '+' ? $ns : $ne) . ", where $na guides' N-termini align, is out of frame with the body: a run of $rl $rb follows it. The call took " . ($NL > $L ? "an internal $ii->{start}, " . ($NL - $L) . " nt short" : "the $ii->{start} " . ($L - $NL) . " nt upstream, in the body's frame") . "; the whole gene is $NL nt from that ATG (not a multiple of 3, reported UNRESOLVED once moved)", "move\t$ex[0][2]\t$s\t$e\t$ns\t$ne"); next } }
     unless (@fl) { emit(rowname($f), $s, $e, $d, 'PASS', '', ''); next }
     my $flags = join('; ', @fl);
     if (!init_ok($ii->{start}, $g) && !$ii->{mod3} && $ii->{term} && !$ii->{internal} && $gd{$g}) { my @same = grep { my $c = $_; grep { $_ eq $ii->{start} } @{ $c->{allstarts} || [] } } values %{ $gd{$g} };
+        # a declared start that fewer than half of the guides share gives way to an in-frame ATG/GTG at a length
+        # the lineage or the guides carry (one Lilium guide declares TTG for cemA; the other seven start at ATG)
+        if (@same && 2 * @same < scalar(keys %{ $gd{$g} }) && @ex == 1) { my %okl = map { $_ => 1 } ((defined $E ? $E : ()), map { @{ $_->{alllens} || [] } } values %{ $gd{$g} }); my @cand;
+            my ($xs, $xe) = $d eq '+' ? ($s - 90, $e) : ($s, $e + 90); my @anch;   # window index 30 is the current start
+            if ($xs >= 1 && $xe <= $len) { my $win = translate(substr(spliced($d, [$xs, $xe]), 0, 183)); for my $gp (guide_nterms($g)) { my ($sc, $at) = nterm_anchor($gp, $win); push @anch, $at if $sc >= 20 } }
+            my $anchor = @anch ? (sort { $a <=> $b } @anch)[$#anch / 2] : undef;
+            for my $k (-30 .. 30) { next unless $k; my ($ns, $ne) = $d eq '+' ? ($s + 3 * $k, $e) : ($s, $e - 3 * $k); next if $ns < 1 || $ne > $len || $ne - $ns + 1 < 30; my $nl = $ne - $ns + 1;
+                my $near = defined $anchor ? abs($k + 30 - $anchor) : 99; next unless $near <= 3 || $okl{$nl};
+                my $x = spliced($d, [$ns, $ne]); my $c = substr($x, 0, 3); next unless $c eq 'ATG' || $c eq 'GTG'; my $p = translate($x); next unless index($p, '*') == length($p) - 1;
+                push @cand, [ $near <= 3 ? $near : 9, (defined $E && $nl == $E) ? 0 : 1, $c eq 'ATG' ? 0 : 1, abs $k, $ns, $ne, $nl, $c ] }
+            if (@cand) { my ($b) = sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] || $a->[2] <=> $b->[2] || $a->[3] <=> $b->[3] } @cand;
+                emit(rowname($f), $s, $e, $d, 'ARTIFACT', $flags, "only " . scalar(@same) . " of " . scalar(keys %{ $gd{$g} }) . " guides carrying $g begin it with $ii->{start}; the in-frame $b->[7] at " . ($d eq '+' ? $b->[4] : $b->[5]) . " gives $b->[6] nt, intact, " . ($b->[0] <= 3 ? "where " . scalar(@anch) . " guides' N-termini align" : $b->[1] ? "a guide copy's length" : "the lineage expectation"), "move\t$ex[0][2]\t$s\t$e\t$b->[4]\t$b->[5]"); next }
+            # no normal start in frame: the minority's declared start may be right, but it is not taken on trust
+            my $oof = 0; for my $q (-45 .. 45) { next unless $q % 3; my $p = $d eq '+' ? $s + $q : $e - $q; next if $p < 3 || $p + 2 > $len; $oof = 1 if spliced($d, $d eq '+' ? [$p, $p + 2] : [$p - 2, $p]) eq 'ATG' }
+            emit(rowname($f), $s, $e, $d, 'UNRESOLVED', $flags, "only " . scalar(@same) . " of " . scalar(keys %{ $gd{$g} }) . " guides carrying $g begin it with $ii->{start} (declared in their records); no in-frame ATG/GTG where the others' N-termini align" . ($oof ? "; an ATG lies out of frame within 15 codons, as a 1-nt indel in a run near the start would leave it: check the assembly there" : "")); next }
         if (@same) { my $lenfit = grep { my $c = $_; grep { abs($L - $_) <= 6 } @{ $c->{alllens} } } @same;
             emit(rowname($f), $s, $e, $d, ($lenfit ? 'PASS' : 'UNRESOLVED'), $flags, scalar(@same) . " of $nguides guides begin their own $g with $ii->{start} (a declared start, transl_except in those records)" . ($lenfit ? "; the length matches a guide copy" : "; but no guide copy has this length")); next } }
     if ($other_full && $L < 0.5 * $want) { emit(rowname($f), $s, $e, $d, 'ARTIFACT', $flags, "a full-length $g (" . ($want) . " nt expected) is annotated elsewhere; this is the remnant copy at the IR boundary", "delete\t$ex[0][2]\t$s\t$e"); next }

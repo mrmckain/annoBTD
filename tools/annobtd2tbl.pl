@@ -17,7 +17,7 @@
 # start is not ATG or GTG gets /exception "RNA editing" and /transl_except (pos:..,aa:Met)
 # as the McKain-lab records do; rps12 is two CDS joining the LSC exon with each IR copy's
 # exons 2 and 3, /exception "trans-splicing"; gene + tRNA or rRNA with /product derived
-# from the name; a *_pseudogene row becomes a gene with /pseudo and a note. Introns and
+# from the name; a *_pseudogene row becomes a gene with /pseudo and a note, and so does a whole\n# CDS whose start a homopolymer run puts out of frame (Liliaceae cemA). Introns and
 # spacer rows are not features.
 use strict; use warnings; use FindBin;
 my ($ann, $fsa, $seqid, @rest) = @ARGV; die "usage: $0 <annotation.txt> <genome.fsa> <seqid> --out-dir DIR [--organism X] [--modifier k=v]... [--products FILE] [--check]\n" unless $seqid;
@@ -42,6 +42,11 @@ my $loc = sub { my ($iv, $d) = @_; my @s = sort { $a->[0] <=> $b->[0] } @$iv; @s
 my @out; my @check;
 my $cds = sub { my ($name, $iv, $d, $exc) = @_; my $x = cds_seq(map { [@$_[0,1], $d] } @$iv); my $start = substr($x, 0, 3); my $p = translate($x);
     my ($first, @more) = split /\n/, $loc->($iv, $d); push @out, "$first\tgene", (map { $_ } @more), "\t\t\tgene\t$name";
+    # a whole gene whose start a homopolymer run puts out of frame (validate_annotation.pl: "start frameshifted by a run"):
+    # no CDS can be written without asserting slippage, so the gene is /pseudo with a note saying why
+    if (!$exc && @$iv == 1 && length($x) % 3 && $start eq 'ATG' && substr($x, 3, 52) =~ /(A{7,}|C{7,}|G{7,}|T{7,})/ && $-[0] <= 45) { my $rl = length $1; my $rb = substr($1, 0, 1);
+        push @out, "\t\t\tpseudo", "\t\t\tnote\tfull length from the start codon; a run of $rl $rb just after the start puts it out of frame with the rest of the gene (frameshift; transcriptional or translational slippage may restore the frame)";
+        push @check, sprintf("%s\t%s\t%d nt\tstart %s\tFRAMESHIFT: a run of %d %s after the start; written as gene /pseudo", $name, $loc->($iv, $d) =~ s/\n/,/gr, length $x, $start, $rl, $rb); return }
     ($first, @more) = split /\n/, $loc->($iv, $d); push @out, "$first\tCDS", @more, "\t\t\tgene\t$name", "\t\t\tproduct\t" . ($prod{$name} // "hypothetical protein"), "\t\t\tcodon_start\t1";
     push @out, "\t\t\texception\ttrans-splicing" if $exc;
     if ($start !~ /^(ATG|GTG)$/) { my @s = sort { $a->[0] <=> $b->[0] } @$iv; my ($ps, $pe) = $d eq '+' ? ($s[0][0], $s[0][0] + 2) : ($s[-1][1] - 2, $s[-1][1]); push @out, "\t\t\texception\tRNA editing", "\t\t\ttransl_except\t(pos:" . ($d eq '+' ? "$ps..$pe" : "complement($ps..$pe)") . ",aa:Met)" }
@@ -65,4 +70,4 @@ if ($rows{rps12}) { my @r = @{ $rows{rps12} }; my @e1 = grep { $_->[3] == 1 } @r
 my $dir = $o{'out-dir'}; open my $tb, ">", "$dir/$seqid.tbl" or die; print $tb ">Feature $seqid\n", join("\n", @out), "\n"; close $tb;
 my $hdr = ">$seqid" . ($o{organism} ? " [organism=$o{organism}]" : "") . " [location=chloroplast] [topology=circular] [completeness=complete] [moltype=genomic DNA]" . join('', map { " [$_]" } @mods);
 open my $fo, ">", "$dir/$seqid.fsa" or die; print $fo "$hdr\n"; for (my $i = 0; $i < $len; $i += 70) { print $fo substr($seq, $i, 70), "\n" } close $fo;
-if ($o{check}) { my $bad = grep { /INTERNAL STOPS|NO TERMINAL STOP/ } @check; printf STDERR "%s: %d CDS checked, %d with problems\n", $seqid, scalar @check, $bad; print STDERR "  $_\n" for grep { /INTERNAL STOPS|NO TERMINAL STOP|start (?!ATG|GTG)/ } @check }
+if ($o{check}) { my $bad = grep { /INTERNAL STOPS|NO TERMINAL STOP|FRAMESHIFT/ } @check; printf STDERR "%s: %d CDS checked, %d with problems\n", $seqid, scalar @check, $bad; print STDERR "  $_\n" for grep { /INTERNAL STOPS|NO TERMINAL STOP|FRAMESHIFT|start (?!ATG|GTG)/ } @check }
