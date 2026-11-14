@@ -268,7 +268,7 @@ for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d});
     # a start the guides carry further upstream (post_filter_annotation.pl section 4c): most guides' N-termini align
     # more than 10 codons upstream of the call, and an in-frame ATG sits within 10 codons of where they align
     if (@ex == 1 && $gd{$g} && !$ii->{mod3}) { my @gl = map { $_->{len} } values %{ $gd{$g} }; my $longer = grep { $_ > $L + 30 } @gl; my @peps = guide_nterms($g);
-        if (@gl >= 3 && 2 * $longer > @gl && @peps >= 3) { my ($gmax) = sort { $b <=> $a } @gl; my $best;
+        if (@gl >= 2 && 2 * $longer > @gl && @peps >= 2) { my ($gmax) = sort { $b <=> $a } @gl; my $best;
             my $avail = $d eq '+' ? $s - 1 : $len - $e; my $up = $gmax - $L + 60; $up = $avail if $up > $avail; $up -= $up % 3;
             if ($up >= 33) { my ($xs, $xe) = $d eq '+' ? ($s - $up, $e) : ($s, $e + $up); my $x = spliced($d, [$xs, $xe]); my $k0 = $up / 3;
                 my $win = translate(substr($x, 0, $up + 90)); my @upa; for my $gp (@peps) { my ($sc, $at) = nterm_anchor($gp, $win); push @upa, $at if $sc >= 20 && $at < $k0 - 10 }

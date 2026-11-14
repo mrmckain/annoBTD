@@ -75,7 +75,8 @@ my (%gcds, %gex1, $nguides);
 if ($o{'guides-dir'} && opendir(my $gd, $o{'guides-dir'})) {
     for my $g (grep { !/^\./ } readdir $gd) { open my $gh, "<", "$o{'guides-dir'}/$g" or next; $nguides++;
         while (<$gh>) { chomp; my @f = split /\t/; next unless ($f[4] // '') eq 'CDS';
-            if ($f[0] =~ /^(.+)_exon1$/) { push @{ $gex1{$1} }, $f[2] - $f[1] + 1 } elsif ($f[0] !~ /_exon\d+$/) { $gcds{$f[0]}{$g} //= [@f[1..3]] } } close $gh }
+            # each guide's longest copy: an IR-boundary fragment listed first (Tulipa ycf1, 1656 of 5334 nt) is not its gene
+            if ($f[0] =~ /^(.+)_exon1$/) { push @{ $gex1{$1} }, $f[2] - $f[1] + 1 } elsif ($f[0] !~ /_exon\d+$/) { my $c = $gcds{$f[0]}{$g}; $gcds{$f[0]}{$g} = [@f[1..3]] if !$c || $f[2] - $f[1] > $c->[1] - $c->[0] } } close $gh }
     closedir $gd }
 # Smith-Waterman (match 2, mismatch -1, gap -2) of a guide's N-terminal peptide against a translated window of
 # the target; returns the score and where the guide's first residue falls in the window (window index of the
@@ -575,8 +576,8 @@ my %upstart;
 if (%gcds && $seq) {
     for my $i (@feat) { next if $drop{$i} || $hpshift{$i}; my $r = $rows[$i]; my $n = $r->[0]; next if $n =~ /^(trn|rrn|rps12)/ || $n =~ /_intron|_exon|_pseudogene/ || !$gcds{$n};
         my ($s, $e, $d) = @$r[1 .. 3]; my $L = $e - $s + 1; next if $L % 3;
-        my @gl = map { $_->[1] - $_->[0] + 1 } values %{ $gcds{$n} }; next unless @gl >= 3; my $longer = grep { $_ > $L + 30 } @gl; next unless 2 * $longer > @gl;
-        my ($gmax) = sort { $b <=> $a } @gl; my (undef, undef, $gpep) = guide_starts($n); next unless @$gpep >= 3;
+        my @gl = map { $_->[1] - $_->[0] + 1 } values %{ $gcds{$n} }; next unless @gl >= 2; my $longer = grep { $_ > $L + 30 } @gl; next unless 2 * $longer > @gl;
+        my ($gmax) = sort { $b <=> $a } @gl; my (undef, undef, $gpep) = guide_starts($n); next unless @$gpep >= 2;
         my $avail = $d eq '+' ? $s - 1 : $len - $e; my $up = $gmax - $L + 60; $up = $avail if $up > $avail; $up -= $up % 3; next if $up < 33;
         my ($xs, $xe) = $d eq '+' ? ($s - $up, $e) : ($s, $e + $up); my $x = cds_seq($xs, $xe, $d); my $k0 = $up / 3;
         my $win = translate(substr($x, 0, $up + 90)); my @upa; for my $gp (@$gpep) { my ($sc, $at) = nterm_anchor($gp, $win); push @upa, $at if $sc >= 20 && $at < $k0 - 10 }
