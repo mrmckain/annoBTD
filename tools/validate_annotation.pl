@@ -117,10 +117,16 @@ sub hp_shift { my ($s, $e, $d, $g) = @_; return () if ($e - $s + 1) % 3; my @pep
     my $win = translate(substr($x, 0, $up + 90)); my @anch; for my $gp (@peps) { my ($sc, $at) = nterm_anchor($gp, $win); push @anch, $at if $sc >= 20 } return () unless @anch;
     my $A = (sort { $a <=> $b } @anch)[$#anch / 2];
     for my $k ($A - 3 .. $A + 3) { next if $k < 0; return () if init_ok(substr($x, 3 * $k, 3), $g) }
-    my ($o) = sort { abs($a - 3 * $A) <=> abs($b - 3 * $A) || $a <=> $b } grep { $_ >= 0 && ($_ - 3 * $A) % 3 && substr($x, $_, 3) eq 'ATG' } (3 * $A - 6 .. 3 * $A + 6);
+    # The ATG is found from the run, not from the anchor's exact position: a lysine run aligns at any offset, so the
+    # guides' first residue lands up to several codons off when the target's run is longer or shorter than theirs (Lilium
+    # fargesii cemA: 19 A against the guides' 9-15 put it 7 nt from the ATG, outside a +-6 nt search). Any out-of-frame ATG
+    # within 15 codons of the anchor that a run of >= 7 identical bases follows within 45 nt qualifies; the nearest wins.
+    my ($o, $run, $rp);
+    for my $c (sort { abs($a - 3 * $A) <=> abs($b - 3 * $A) || $a <=> $b } grep { $_ >= 0 && ($_ - 3 * $A) % 3 } (3 * $A - 45 .. 3 * $A + 45)) {
+        next unless substr($x, $c, 3) eq 'ATG' && substr($x, $c + 3, 52) =~ /(A{7,}|C{7,}|G{7,}|T{7,})/ && $-[0] <= 45; ($o, $run, $rp) = ($c, $1, $-[0]); last }
     return () unless defined $o;
-    return () unless substr($x, $o + 3, 52) =~ /(A{7,}|C{7,}|G{7,}|T{7,})/; my ($run, $rp) = ($1, $-[0]); return () if $rp > 45;
-    my $NL = length($x) - $o; return () unless grep { my $c = $_; grep { abs($NL - $_) <= 9 } @{ $c->{alllens} } } values %{ $gd{$g} };
+    my $NL = length($x) - $o; my $tol = 9 + (length($run) > 12 ? length($run) - 12 : 0);
+    return () unless grep { my $c = $_; grep { abs($NL - $_) <= $tol } @{ $c->{alllens} } } values %{ $gd{$g} };
     my ($ns, $ne) = $d eq '+' ? ($xs + $o, $e) : ($s, $xe - $o);
     return ($ns, $ne, $NL, length $run, substr($run, 0, 1), scalar @anch) }
 # The same gene already called whole: an ATG start, a length that is not a multiple of 3, a run of >= 7
@@ -151,6 +157,11 @@ my (%feat, @order); our @rows_all = @rows;   # key gene\tstrand\tcopy -> { gene,
       my $c = 0; for my $grp (@groups) { $c++; my $key = "$base\t$d\t$c"; $feat{$key} = { gene => $base, d => $d, ex => $grp, pseudo => ($base =~ /_pseudogene$/ ? 1 : 0), rna => ($base =~ /^(trn|rrn)/ ? 1 : 0) }; push @order, $key } } }
 my %present; for my $k (keys %feat) { (my $g = $feat{$k}{gene}) =~ s/_pseudogene$//; $present{$g} = 1 }
 # same-strand CDS overlap of [s,e] with other genes
+# an overlap the guides carry themselves: at least half of the guides with both genes overlap them by >= ov - 15 nt
+# (ndhK/ndhC by about 121 nt in the Liliaceae and other lineages, psbD/psbC by 53, atpE/atpB by 4)
+sub guides_overlap { my ($g, $who, $ov) = @_; my ($n, $ok) = (0, 0); for my $name (keys %{ $gd{$g} || {} }) { my $b = $gd{$who}{$name} or next; my $a = $gd{$g}{$name}; next unless $a->{d} eq $b->{d};
+        my ($as, $ae) = ($a->{ex}[0][0], $a->{ex}[-1][1]); my ($bs, $be) = ($b->{ex}[0][0], $b->{ex}[-1][1]); my $lo = $as > $bs ? $as : $bs; my $hi = $ae < $be ? $ae : $be; $n++; $ok++ if $hi - $lo + 1 >= $ov - 15 }
+    return $n && 2 * $ok >= $n ? 1 : 0 }
 sub overlap_other { my ($key, $s, $e, $d) = @_; my ($best, $who) = (0, ''); for my $k (keys %feat) { next if $k eq $key; my $f = $feat{$k}; next if $f->{rna} || $f->{pseudo} || $f->{d} ne $d; for my $x (@{ $f->{ex} }) { my $lo = $s > $x->[0] ? $s : $x->[0]; my $hi = $e < $x->[1] ? $e : $x->[1]; if ($hi - $lo + 1 > $best) { $best = $hi - $lo + 1; $who = $f->{gene} } } } ($best, $who) }
 
 # ---- tblastn of the guide protein, HSPs restricted to a window --------------------------
@@ -242,7 +253,7 @@ for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d});
     my $lenok = !($E || $gl) || grep { abs($L - $_) <= ($_ == ($E // -1) ? $tol * $_ : 6) } @okL; $lenok = 1 if $gl && abs($L - $gl) <= $tol * $gl;
     push @fl, sprintf("length %d vs expected %d (%s)", $L, $want, $E ? $why : "guides' mode") unless $lenok;
     push @fl, sprintf("%d exon%s vs guides' %d", scalar @ex, @ex > 1 ? 's' : '', $gnex) if $gnex && @ex != $gnex;
-    my ($ov, $who) = overlap_other($key, $s, $e, $d); push @fl, "overlaps $who by $ov nt" if $ov > 60 || ($ov > 30 && !$lenok);
+    my ($ov, $who) = overlap_other($key, $s, $e, $d); my $ovok = $ov > 0 && guides_overlap($g, $who, $ov); push @fl, "overlaps $who by $ov nt" if !$ovok && ($ov > 60 || ($ov > 30 && !$lenok));
     push @fl, "not a canonical gene and carried by $nc of $nguides guides" if !$CANON{$g} && $nguides && $nc < $nguides / 2;
     # a second, much shorter copy of a gene another copy carries in full: the IR-boundary remnant
     my $other_full = 0; for my $k (keys %feat) { next if $k eq $key; my $o2 = $feat{$k}; next unless $o2->{gene} eq $g; my $L2 = 0; $L2 += $_->[1] - $_->[0] + 1 for @{ $o2->{ex} }; $other_full = 1 if $L2 > 1.5 * $L && abs($L2 - $want) <= 0.1 * $want }
@@ -254,6 +265,19 @@ for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d});
                 "the CDS runs from the ATG the guides start $g at to the stop: a run of $rl $rb at CDS position $rp puts that ATG out of frame with the body (the run's length differs between plastomes of the lineage; when it is a multiple of 3 the gene is intact). Whether slippage on the run restores the frame, translation begins at a downstream ATG, or $g is a pseudogene cannot be told from the sequence: confirm the run's length in the reads; for GenBank the CDS needs /pseudo or a /ribosomal_slippage join"); next }
         if (my ($ns, $ne, $NL, $rl, $rb, $na) = hp_shift($s, $e, $d, $g)) { emit(rowname($f), $s, $e, $d, 'ARTIFACT', join('; ', @fl, "start frameshifted by a run of $rl $rb"),
                 "the ATG at " . ($d eq '+' ? $ns : $ne) . ", where $na guides' N-termini align, is out of frame with the body: a run of $rl $rb follows it. The call took " . ($NL > $L ? "an internal $ii->{start}, " . ($NL - $L) . " nt short" : "the $ii->{start} " . ($L - $NL) . " nt upstream, in the body's frame") . "; the whole gene is $NL nt from that ATG (not a multiple of 3, reported UNRESOLVED once moved)", "move\t$ex[0][2]\t$s\t$e\t$ns\t$ne"); next } }
+    # a start the guides carry further upstream (post_filter_annotation.pl section 4c): most guides' N-termini align
+    # more than 10 codons upstream of the call, and an in-frame ATG sits within 10 codons of where they align
+    if (@ex == 1 && $gd{$g} && !$ii->{mod3}) { my @gl = map { $_->{len} } values %{ $gd{$g} }; my $longer = grep { $_ > $L + 30 } @gl; my @peps = guide_nterms($g);
+        if (@gl >= 3 && 2 * $longer > @gl && @peps >= 3) { my ($gmax) = sort { $b <=> $a } @gl; my $best;
+            my $avail = $d eq '+' ? $s - 1 : $len - $e; my $up = $gmax - $L + 60; $up = $avail if $up > $avail; $up -= $up % 3;
+            if ($up >= 33) { my ($xs, $xe) = $d eq '+' ? ($s - $up, $e) : ($s, $e + $up); my $x = spliced($d, [$xs, $xe]); my $k0 = $up / 3;
+                my $win = translate(substr($x, 0, $up + 90)); my @upa; for my $gp (@peps) { my ($sc, $at) = nterm_anchor($gp, $win); push @upa, $at if $sc >= 20 && $at < $k0 - 10 }
+                if (2 * @upa > @peps) { my $med = (sort { $a <=> $b } @upa)[$#upa / 2];
+                    for my $c (sort { abs($a - $med) <=> abs($b - $med) || $a <=> $b } grep { $_ >= 0 && $_ < $k0 } ($med - 10 .. $med + 10)) { my $cod = substr($x, 3 * $c, 3);
+                        next unless $cod eq 'ATG' || ($cod eq 'ACG' && $EDITABLE{$g}); next if translate(substr($x, 3 * $c, 3 * ($k0 - $c))) =~ /\*/;
+                        my ($ns, $ne) = $d eq '+' ? ($xs + 3 * $c, $e) : ($s, $xe - 3 * $c); $best = [$ns, $ne, $ne - $ns + 1, $cod, scalar @upa, scalar @peps]; last } } }
+            if ($best && intact_info(spliced($d, [$best->[0], $best->[1]]), $g)->{intact}) {
+                emit(rowname($f), $s, $e, $d, 'ARTIFACT', join('; ', @fl, "start downstream of the guides'"), "$best->[4] of $best->[5] guides' N-termini align more than 10 codons upstream of this $L nt call (guides carry " . join(',', sort { $a <=> $b } @gl) . " nt); the in-frame $best->[3] there, at " . ($d eq '+' ? $best->[0] : $best->[1]) . ", gives an intact $best->[2] nt CDS", "move\t$ex[0][2]\t$s\t$e\t$best->[0]\t$best->[1]"); next } } }
     unless (@fl) { emit(rowname($f), $s, $e, $d, 'PASS', '', ''); next }
     my $flags = join('; ', @fl);
     if (!init_ok($ii->{start}, $g) && !$ii->{mod3} && $ii->{term} && !$ii->{internal} && $gd{$g}) { my @same = grep { my $c = $_; grep { $_ eq $ii->{start} } @{ $c->{allstarts} || [] } } values %{ $gd{$g} };
@@ -290,7 +314,7 @@ for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d});
         my ($mqs) = sort { $a <=> $b } map { $_->{qs} } @main; my ($mqe) = sort { $b <=> $a } map { $_->{qe} } @main;
         my $nterm_only = @main && !grep { $_->{qe} > ($mqs // 0) + 5 } grep { my $x = $_; !grep { $_ == $x } @main } @$h;
         if ($ii->{intact} && $mcov >= 0.7 && ($mqe // 0) >= $plen - 3 && $nterm_only && $nfr > 1) { emit(rowname($f), $s, $e, $d, 'PASS', $flags, "$evb; the call is intact and carries the protein from residue $mqs to the end in frame; the guide's first " . ($mqs - 1) . " residues are not conserved in frame, so the guide's own start is the over-extended one"); next }
-        if ($ii->{intact} && $ov > 60) { my $gotL = 0; my ($ns, $ne) = ($s, $e);
+        if ($ii->{intact} && $ov > 60 && !$ovok) { my $gotL = 0; my ($ns, $ne) = ($s, $e);
             PL: for my $PL (profile_lengths($g)) { next if $PL >= $L - 30; my $p = $d eq '+' ? $s : $e;
                 for my $k (1 .. 200) { if ($d eq '+') { $p += 3; last if $p > $e - 90; my $c = substr($seq, $p - 1, 3); last if ($CODON{$c} // '') eq '*'; next unless $INIT{$c}; my $NL = $e - $p + 1; if (abs($NL - $PL) <= 6) { ($ns, $gotL) = ($p, $NL); last PL } }
                     else { $p -= 3; last if $p < $s + 90; my $c = rc(substr($seq, $p - 3, 3)); last if ($CODON{$c} // '') eq '*'; next unless $INIT{$c}; my $NL = $p - $s + 1; if (abs($NL - $PL) <= 6) { ($ne, $gotL) = ($p, $NL); last PL } } } }

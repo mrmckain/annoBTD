@@ -540,10 +540,16 @@ sub hp_shift { my ($s, $e, $d, $peps, $glens, $acg) = @_; return () if ($e - $s 
     my $win = translate(substr($x, 0, $up + 90)); my @anch; for my $gp (@$peps) { my ($sc, $at) = nterm_anchor($gp, $win); push @anch, $at if $sc >= 20 } return () unless @anch;
     my $A = (sort { $a <=> $b } @anch)[$#anch / 2];
     for my $k ($A - 3 .. $A + 3) { next if $k < 0; my $c = substr($x, 3 * $k, 3); return () if $c eq 'ATG' || $c eq 'GTG' || ($acg && $c eq 'ACG') }
-    my ($o) = sort { abs($a - 3 * $A) <=> abs($b - 3 * $A) || $a <=> $b } grep { $_ >= 0 && ($_ - 3 * $A) % 3 && substr($x, $_, 3) eq 'ATG' } (3 * $A - 6 .. 3 * $A + 6);
+    # The ATG is found from the run, not from the anchor's exact position: a lysine run aligns at any offset, so the
+    # guides' first residue lands up to several codons off when the target's run is longer or shorter than theirs (Lilium
+    # fargesii cemA: 19 A against the guides' 9-15 put it 7 nt from the ATG, outside a +-6 nt search). Any out-of-frame ATG
+    # within 15 codons of the anchor that a run of >= 7 identical bases follows within 45 nt qualifies; the nearest wins.
+    my ($o, $run, $rp);
+    for my $c (sort { abs($a - 3 * $A) <=> abs($b - 3 * $A) || $a <=> $b } grep { $_ >= 0 && ($_ - 3 * $A) % 3 } (3 * $A - 45 .. 3 * $A + 45)) {
+        next unless substr($x, $c, 3) eq 'ATG' && substr($x, $c + 3, 52) =~ /(A{7,}|C{7,}|G{7,}|T{7,})/ && $-[0] <= 45; ($o, $run, $rp) = ($c, $1, $-[0]); last }
     return () unless defined $o;
-    return () unless substr($x, $o + 3, 52) =~ /(A{7,}|C{7,}|G{7,}|T{7,})/; my ($run, $rp) = ($1, $-[0]); return () if $rp > 45;
-    my $NL = length($x) - $o; return () unless grep { abs($NL - $_) <= 9 } @$glens;
+    my $NL = length($x) - $o; my $tol = 9 + (length($run) > 12 ? length($run) - 12 : 0);
+    return () unless grep { abs($NL - $_) <= $tol } @$glens;
     my ($ns, $ne) = $d eq '+' ? ($xs + $o, $e) : ($s, $xe - $o);
     return ($ns, $ne, $NL, length $run, substr($run, 0, 1), scalar @anch) }
 if ($o{'guide-seqs'} && -d $o{'guide-seqs'} && %gcds && $seq) {
@@ -554,6 +560,34 @@ if ($o{'guide-seqs'} && -d $o{'guide-seqs'} && %gcds && $seq) {
         printf $log "START_FRAMESHIFT\t%s %d-%d %s\t%s start, %d nt -> %d-%d, %d nt from the ATG where %d guides' N-termini align: a run of %d %s right after it puts that ATG out of frame with the body; called whole and flagged\n",
             $n, @$r[1 .. 3], $cur, $L, $ns, $ne, $NL, $na, $rl, $rb;
         ($r->[1], $r->[2]) = ($ns, $ne); $hpshift{$i} = 1 }
+}
+
+# --- 4c. a start the guides carry further upstream -----------------------------------
+# The start is transferred from one guide, and one guide's short copy is not the gene: in 66 Lilium genomes
+# ndhK followed a nearest guide annotated at 762-804 nt while the other seven carry 873-894 nt, the copy that
+# overlaps ndhC by 121 nt (as ~740 of ~950 Liliaceae GenBank records do); a cemA called at its internal Met
+# (477 nt) has the same shape. When more than half of the guides carrying the gene carry it more than 10 codons
+# longer than the call AND the N-terminal peptides of most of the ATG/GTG guides align upstream of the call's start
+# (more than 10 codons), the start moves to the in-frame ATG (ACG for the edited genes) nearest where they align,
+# within 10 codons and with no stop between it and the call. Length alone is not the test: rpoC2's guides run
+# 3675-4584 nt through indels in the middle of the gene while their N-termini sit where the call starts.
+my %upstart;
+if (%gcds && $seq) {
+    for my $i (@feat) { next if $drop{$i} || $hpshift{$i}; my $r = $rows[$i]; my $n = $r->[0]; next if $n =~ /^(trn|rrn|rps12)/ || $n =~ /_intron|_exon|_pseudogene/ || !$gcds{$n};
+        my ($s, $e, $d) = @$r[1 .. 3]; my $L = $e - $s + 1; next if $L % 3;
+        my @gl = map { $_->[1] - $_->[0] + 1 } values %{ $gcds{$n} }; next unless @gl >= 3; my $longer = grep { $_ > $L + 30 } @gl; next unless 2 * $longer > @gl;
+        my ($gmax) = sort { $b <=> $a } @gl; my (undef, undef, $gpep) = guide_starts($n); next unless @$gpep >= 3;
+        my $avail = $d eq '+' ? $s - 1 : $len - $e; my $up = $gmax - $L + 60; $up = $avail if $up > $avail; $up -= $up % 3; next if $up < 33;
+        my ($xs, $xe) = $d eq '+' ? ($s - $up, $e) : ($s, $e + $up); my $x = cds_seq($xs, $xe, $d); my $k0 = $up / 3;
+        my $win = translate(substr($x, 0, $up + 90)); my @upa; for my $gp (@$gpep) { my ($sc, $at) = nterm_anchor($gp, $win); push @upa, $at if $sc >= 20 && $at < $k0 - 10 }
+        next unless 2 * @upa > @$gpep; my $med = (sort { $a <=> $b } @upa)[$#upa / 2]; my $best;
+        for my $c (sort { abs($a - $med) <=> abs($b - $med) || $a <=> $b } grep { $_ >= 0 && $_ < $k0 } ($med - 10 .. $med + 10)) { my $cod = substr($x, 3 * $c, 3);
+            next unless $cod eq 'ATG' || ($cod eq 'ACG' && $EDITED{$n}); next if translate(substr($x, 3 * $c, 3 * ($k0 - $c))) =~ /\*/;
+            my ($ns, $ne) = $d eq '+' ? ($xs + 3 * $c, $e) : ($s, $xe - 3 * $c); $best = [$ns, $ne, $ne - $ns + 1, $cod]; last }
+        next unless $best;
+        printf $log "START_UPSTREAM\t%s %d-%d %s\t%s start, %d nt -> %d-%d, %d nt at the in-frame %s where %d of %d guides' N-termini align (guides carry %s at %s nt)\n",
+            $n, $s, $e, $d, substr(cds_seq($s, $e, $d), 0, 3), $L, @$best[0 .. 3], scalar @upa, scalar @$gpep, $n, join(',', sort { $a <=> $b } @gl);
+        ($r->[1], $r->[2]) = @$best[0, 1]; $upstart{$i} = 1 }
 }
 
 # --- 5. a truncated start extended to the lineage's settled length ------------------
@@ -579,7 +613,7 @@ if ($o{profile} && -s $o{profile} && $seq) {
         my $gc = $cell{$g}{$gen}; if ($gc && $gc->[1] >= $MIN_N_GENUS) { return $gc->[2] >= $MIN_CONS ? ($gc->[0], 'genus') : () }
         my $oc = $cell{$g}{$ord}; return ($oc->[0], 'order') if $oc && $oc->[1] >= $MIN_N && $oc->[2] >= $MIN_CONS; () };
     my %edited = map { $_ => 1 } qw(ndhD psbL rpl2 psbC); my %stop = map { $_ => 1 } qw(TAA TAG TGA);
-    for my $i (@feat) { next if $drop{$i} || $hpshift{$i}; my $r = $rows[$i]; my $n = $r->[0]; next if $n =~ /^(trn|rrn)/ || $n =~ /_intron/ || $n =~ /^rps12/;
+    for my $i (@feat) { next if $drop{$i} || $hpshift{$i} || $upstart{$i}; my $r = $rows[$i]; my $n = $r->[0]; next if $n =~ /^(trn|rrn)/ || $n =~ /_intron/ || $n =~ /^rps12/;
         next if $n =~ /_exon(\d+)$/ && $1 != 1; (my $base = $n) =~ s/_exon1$//;
         my ($E, $src) = $expect->($n); next unless $E; my $L = $r->[2] - $r->[1] + 1; next unless $E > $L && $E % 3 == 0;
         my $d = $r->[3]; my $three = $d eq '+' ? $r->[2] : $r->[1]; my ($a, $b) = $d eq '+' ? ($three - $E + 1, $three) : ($three, $three + $E - 1); next if $a < 1 || $b > $len;
@@ -592,7 +626,7 @@ if ($o{profile} && -s $o{profile} && $seq) {
     # AAA, copied from a record that annotates it so) is wrong wherever it came from.
     # The in-frame ATG or GTG within 15 codons that gives the settled expectation, else
     # the guides' modal length, else the nearest one upstream, takes over.
-    for my $i (@feat) { next if $drop{$i} || $hpshift{$i}; my $r = $rows[$i]; my $n = $r->[0]; next if $n =~ /^(trn|rrn)/ || $n =~ /_intron/ || $n =~ /^rps12/; next if $n =~ /_exon(\d+)$/ && $1 != 1; (my $base = $n) =~ s/_exon1$//;
+    for my $i (@feat) { next if $drop{$i} || $hpshift{$i} || $upstart{$i}; my $r = $rows[$i]; my $n = $r->[0]; next if $n =~ /^(trn|rrn)/ || $n =~ /_intron/ || $n =~ /^rps12/; next if $n =~ /_exon(\d+)$/ && $1 != 1; (my $base = $n) =~ s/_exon1$//;
         my $d = $r->[3]; my $L = $r->[2] - $r->[1] + 1; my $cur = substr(cds_seq(@$r[1, 2], $d), 0, 3); next if !$cur || $INIT{$cur};
         my ($E) = $expect->($n); my $gm = $n =~ /_exon1$/ ? ($gex1{$base} ? guide_mode(@{ $gex1{$base} }) : undef) : ($gcds{$base} ? guide_mode(map { $_->[1] - $_->[0] + 1 } values %{ $gcds{$base} }) : undef);
         my @cand; for my $k (-30 .. 30) { next unless $k; my $nl = $L - 3 * $k; next if $nl < 30; my ($s, $e) = $d eq '+' ? ($r->[1] + 3 * $k, $r->[2]) : ($r->[1], $r->[2] - 3 * $k); next if $s < 1 || $e > $len;
@@ -608,7 +642,7 @@ if ($o{profile} && -s $o{profile} && $seq) {
     # the call's codon, the in-frame ATG (else GTG) within 30 codons that gives the settled expectation, else
     # the length most guides carry, else any guide's length, takes over; with no such start the call stands.
     if ($o{'guide-seqs'} && -d $o{'guide-seqs'}) {
-        for my $i (@feat) { next if $drop{$i} || $extended{$i} || $hpshift{$i}; my $r = $rows[$i]; my $n = $r->[0]; next if $n =~ /^(trn|rrn)/ || $n =~ /_intron|_exon/ || !$gcds{$n};
+        for my $i (@feat) { next if $drop{$i} || $extended{$i} || $hpshift{$i} || $upstart{$i}; my $r = $rows[$i]; my $n = $r->[0]; next if $n =~ /^(trn|rrn)/ || $n =~ /_intron|_exon/ || !$gcds{$n};
             my $d = $r->[3]; my $L = $r->[2] - $r->[1] + 1; my $cur = substr(cds_seq(@$r[1, 2], $d), 0, 3);
             next if !$INIT{$cur} || $cur eq 'ATG' || ($cur eq 'ACG' && $edited{$n});
             my ($gs_, $gl_, $gp_, $ncarry) = guide_starts($n); my %gstart = %$gs_; my %glen = %$gl_; my @gpep = @$gp_;
@@ -634,7 +668,7 @@ if ($o{profile} && -s $o{profile} && $seq) {
 }
 
 # --- rewrite, merging intergenic rows around removed features ------------------
-unless (%drop || %moved || %moved_strand || %renamed || %spliced || %extended || %rescued || %majority || %hpshift) { close $log if $o{log}; exit 0 }
+unless (%drop || %moved || %moved_strand || %renamed || %spliced || %extended || %rescued || %majority || %hpshift || %upstart) { close $log if $o{log}; exit 0 }
 my @keep = grep { !$drop{$_} } @feat;
 my @out;
 # feature rows in file order, skipping dropped ones and all old intergenic rows
@@ -650,7 +684,7 @@ push @gaps, ["$prev_name~End", $prev_end + 1, $len, '+'] if $len && $len > $prev
 my @regions = grep { $_->[0] =~ /^(LSC|SSC|IRA|IRB|FULL)$/ } @out; my @features = grep { $_->[0] !~ /^(LSC|SSC|IRA|IRB|FULL)$/ } @out;
 my @merged = sort { $a->[1] <=> $b->[1] || ($a->[0] =~ /~/ ? 0 : 1) <=> ($b->[0] =~ /~/ ? 0 : 1) } (@features, @gaps);
 open my $w, ">", $ann or die; print $w join("\t", @$_), "\n" for @merged, @regions; close $w;
-printf $log "removed %d feature rows, moved %d tRNA rows, re-stranded %d, renamed %d, junctions from guides %d, exon junctions slid %d, starts fixed %d, starts frameshifted in a run %d, genes rescued %d\n", scalar keys %drop, scalar keys %moved, scalar keys %moved_strand, scalar keys %renamed, scalar keys %majority, scalar keys %spliced, scalar keys %extended, scalar keys %hpshift, scalar keys %rescued; close $log if $o{log};
+printf $log "removed %d feature rows, moved %d tRNA rows, re-stranded %d, renamed %d, junctions from guides %d, exon junctions slid %d, starts fixed %d, starts frameshifted in a run %d, starts moved upstream %d, genes rescued %d\n", scalar keys %drop, scalar keys %moved, scalar keys %moved_strand, scalar keys %renamed, scalar keys %majority, scalar keys %spliced, scalar keys %extended, scalar keys %hpshift, scalar keys %upstart, scalar keys %rescued; close $log if $o{log};
 
 # Structural placement of a tRNA gene inside an ARAGORN window. ARAGORN pads its
 # window with a flanking base at either end whenever that base can pair, so the

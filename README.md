@@ -158,9 +158,14 @@ stops early, or part of the gene is gone: a pseudogene call with the evidence) o
 that cannot be placed: look at the assembly). Canonical genes the guides carry but
 the annotation lacks are tested the same way.
 
-Starts get two rules. A rare start codon (TTG, ATA, ...) is kept only when at least
-half of the guides carrying the gene begin their own copy with it; otherwise the
-start moves to the in-frame ATG where the other guides' N-termini align. And a
+Starts are not taken from one guide on trust. A rare start codon (TTG, ATA, ...) is
+kept only when at least half of the guides carrying the gene begin their own copy
+with it; otherwise the start moves to the in-frame ATG where the other guides'
+N-termini align. A call that starts more than 10 codons downstream of where most
+guides' N-termini align moves up to the in-frame ATG there (Liliaceae ndhK called at
+783 nt from one guide, where the other seven carry the 879-894 nt copy). Genes may
+overlap: an overlap the guides carry too (ndhK/ndhC, psbD/psbC, atpE/atpB) is not
+flagged. And a
 gene whose ATG is followed by a homopolymer run that is not a multiple of 3 (cemA
 in the Liliaceae: 9 to 25 A after the ATG, varying even within *Lilium*) is called
 whole, from that ATG to the stop, so its length is not a multiple of 3. The
