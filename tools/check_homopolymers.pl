@@ -25,9 +25,9 @@
 # well represented. Above about 18 bases the commonest length is itself
 # uncertain.
 #
-# --fix FASTA writes the assembly with every suggested length applied. The
-# coordinates of everything downstream of a changed run shift, so annotate
-# the fixed sequence again.
+# --fix FASTA writes the assembly with every suggested length applied; when no
+# length is suggested the file is not written. The coordinates of everything
+# downstream of a changed run shift, so annotate the fixed sequence again.
 use strict;
 use warnings;
 use Getopt::Long;
@@ -147,7 +147,11 @@ for my $x (@S) {
 }
 close $O if $out;
 
-if ($fix) {
+if ($fix && !@edits) {
+    unlink $fix if -e $fix;
+    print STDERR "check_homopolymers.pl: no run needs another length; $fix not written\n";
+}
+elsif ($fix) {
     my $new = $g;
     my %done;
     # Right to left, so earlier coordinates stay valid; each run once.
