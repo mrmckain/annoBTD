@@ -135,6 +135,9 @@ Output, in `Mygenus_species_annobtd/`:
 | `<prefix>_annotation.txt` | `gene  start  end  strand`, 1-based inclusive; exons as `gene_exonN`, introns as `gene_intronN`, spacers as `geneA~geneB`, plus `LSC`, `SSC`, `IRA`, `IRB`, `FULL` region rows |
 | `<prefix>_guides.tsv` | the guides used, their similarity, and why each passed or was backfilled |
 | `<prefix>_post_filter.txt` | every decision the post filter took, one line each |
+| `<prefix>_homopolymers.tsv` | genes whose reading frame shifts at a homopolymer run: the run's position, its length and the lengths that would restore the frame |
+| `<prefix>_homopolymer_reads.tsv` | with `--reads`: each of those runs counted in the reads, with a verdict |
+| `<prefix>_corrected.fasta`, `<prefix>_corrected/` | with `--reads`, when the reads call for another run length: the sequence with it applied, and that sequence's annotation |
 | `<prefix>_checks/` | protein sanity (`check_annotation.tsv`) and splice-site (`check_splice.tsv`) reports |
 | `work/` | the complete run: BLAST output, ORFs, pipeline log |
 
@@ -148,15 +151,16 @@ perl tools/validate_annotation.pl Mygenus_species_annobtd/Mygenus_species_annota
 
 One row per CDS, tRNA and rRNA. A feature that agrees with the lineage profile,
 the guides' copies of the gene and its own translation is `PASS`. Anything else
-is re-derived from the guide protein with tblastn and given one of three verdicts:
+is re-derived from the guide protein with tblastn and given one of these verdicts:
 `ARTIFACT` (the sequence carries a canonical form the annotator missed: a start
 one codon off, an exon boundary within 3 nt, a start over-extended into the
 neighbouring gene, a remnant copy at the IR boundary; the fix is given in
 `tools/verdant_edit.pl` format), `REAL` (the guide protein aligns in two frames,
 stops early, or part of the gene is gone: a pseudogene call with the evidence) or
 `UNRESOLVED` (ambiguity codes in the span, an IR boundary inside the gene, an exon
-that cannot be placed: look at the assembly). Canonical genes the guides carry but
-the annotation lacks are tested the same way.
+that cannot be placed: look at the assembly). A gene whose reading frame shifts at
+a homopolymer run and is intact on both sides of it is `FRAMESHIFT` (see below).
+Canonical genes the guides carry but the annotation lacks are tested the same way.
 
 Starts, junctions and RNA genes are not taken from one guide on trust, and a genome's own
 GenBank record, when it is among the guides, is one vote like any other (ten *Lilium* GenBank
@@ -184,16 +188,45 @@ genomes annotated with and without their own record now differ in none of ~1,280
   ends follow the guides' majority. Intron rows are rebuilt from the exons.
 - **IR-boundary remnants.** The partial second copy of a gene that crosses an IR boundary
   (ycf1, ~1.2 kb) is not called, as in the curated genomes.
-- **Frameshifts at homopolymer runs.** When a gene's reading frame is lost at a run of 7 or
-  more identical bases (cemA in the Liliaceae, 9 to 25 A right after the ATG, varying even
-  within *Lilium*; a *Lilium* ndhF with 11 T where its relatives carry 7), the gene is called
-  whole, from its start codon to its stop, in frame before the run and in frame after it, and
-  named `<gene>_pseudogene`. `<prefix>_homopolymers.tsv` lists each one with the run's
-  coordinates, length and the lengths that would restore the frame, so the assembly can be
-  checked there. The validator repeats the run's position on the pseudogene row, and
-  `tools/annobtd2tbl.pl` writes a gene with /pseudo and a note naming the run. Older calls of
-  such a gene (an internal ATG, an upstream TTG/ATA/AAT, the whole span under the gene's own
-  name) come out `ARTIFACT` with the move and rename as the fix.
+- **Frameshifts at homopolymer runs.** When a gene's reading frame shifts at a run of 7 or
+  more identical bases (cemA in the Liliaceae, 9 to 25 A right after the ATG; ndhG in the
+  North American *Lilium*, 18 to 21 A inside the gene), the gene is called whole, from its
+  start codon to its stop, in frame before the run and in frame after it, and it keeps its
+  name. It is treated as functional: chloroplasts read through frameshifts in such runs
+  (recoding at an 11-A run in atpB, Malinova et al. 2021, Plant Cell 33:1682; transcriptional
+  slippage, Lin et al. 2015, PLoS One 10:e0129396), so the frameshift alone does not make
+  the gene a pseudogene. `<prefix>_homopolymers.tsv` lists each one with the run's
+  coordinates, length and the
+  lengths that would restore the frame. The validator gives the row the verdict `FRAMESHIFT`
+  with the run's position, and `tools/annobtd2tbl.pl` writes its CDS as two spans with
+  /exception "ribosomal slippage" and a note naming the run, the form GenBank asks for when
+  a frameshift is thought to be corrected by slippage. Older calls of such a gene (an
+  internal ATG, an upstream TTG/ATA/AAT, a row named `<gene>_pseudogene`) come out
+  `ARTIFACT` with the move or rename as the fix.
+- **Counting the runs in the reads.** A long run is where an assembly is most likely to be
+  off by a base, so check each reported run against the reads:
+
+  ```bash
+  annobtd.sh my_plastome.fasta Mygenus_species --reads R1.fastq.gz,R2.fastq.gz [other options]
+  ```
+
+  or, for an annotation that already exists,
+
+  ```bash
+  perl tools/check_homopolymers.pl my_plastome.fasta Mygenus_species_annobtd/Mygenus_species_homopolymers.tsv \
+       --reads R1.fastq.gz R2.fastq.gz --out homopolymer_reads.tsv [--fix corrected.fasta]
+  ```
+
+  `<prefix>_homopolymer_reads.tsv` has one row per run: how many reads cross it, the run
+  lengths they show, and a verdict. `confirmed`: the assembly's length is the commonest in
+  the reads by at least 1.5 times the next. `reads differ`: another length is; it is
+  suggested. `unresolved`: two or more lengths are about equally common; if one of them keeps
+  the gene in frame it is suggested, since an intact gene is the better guess when the reads
+  cannot decide. `too few reads`: fewer than 10 reads cross the run. When a length is
+  suggested, `annobtd.sh --reads` writes `<prefix>_corrected.fasta` with it applied and
+  annotates that sequence in `<prefix>_corrected/`; use the corrected sequence and its
+  annotation from then on. Reads undercount long runs more often than they overcount them,
+  and above about 18 bases the commonest length is itself uncertain.
 
 With `--val`, table2asn's validator
 messages for the same features are attached. `test/validate_truth.sh` scores the

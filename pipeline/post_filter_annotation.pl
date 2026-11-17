@@ -609,9 +609,12 @@ my %consj;
 # identical bases starts within 45 nt after it, and the whole span is within 9 nt of
 # a length a guide copy carries.
 my %hpshift; my %EDITED = map { $_ => 1 } qw(ndhD psbL rpl2 psbC);
-# Homopolymer frameshifts are called as pseudogenes and reported (--homopolymers FILE): the gene runs from its start codon
-# to its stop, in frame before the run and in frame after it, the row is named <gene>_pseudogene, and the report gives the
-# run's position so the assembly can be checked there.
+# A gene whose frame shifts at a homopolymer run is kept as a functional gene and reported (--homopolymers FILE): the
+# row keeps the gene's name and runs from its start codon to its stop, in frame before the run and in frame after it,
+# and the report gives the run's position so its length can be counted in the reads (tools/check_homopolymers.pl).
+# Chloroplasts read through such frameshifts (recoding at an 11-A run in atpB, Malinova et al. 2021 Plant Cell
+# 33:1682; transcriptional slippage, Lin et al. 2015 PLoS One 10:e0129396), so the frameshift alone does not make
+# the gene a pseudogene.
 my @hpreport;
 sub hp_report { my ($gene, $s, $e, $d, $site, $how) = @_; my ($off, $l, $b, $ok) = @$site; my ($rs, $re) = $d eq '+' ? ($s + $off, $s + $off + $l - 1) : ($e - $off - $l + 1, $e - $off);
     (my $fb = $b) =~ tr/ACGT/TGCA/; $fb = $b if $d eq '+';
@@ -651,9 +654,9 @@ if ($o{'guide-seqs'} && -d $o{'guide-seqs'} && %gcds && $seq) {
         my $L = $r->[2] - $r->[1] + 1; my $cur = substr(cds_seq(@$r[1 .. 3]), 0, 3);
         # the whole span must be one frame but for that run (in frame before it, in frame after it)
         my @site = ConservedStart::homopolymer_site(cds_seq($ns, $ne, $r->[3])) or next; my ($rs, $re) = hp_report($n, $ns, $ne, $r->[3], \@site, 'beside the start codon');
-        printf $log "START_FRAMESHIFT\t%s %d-%d %s\t%s start, %d nt -> %s_pseudogene %d-%d, %d nt from the ATG where %d guides' N-termini align: a run of %d %s at %d-%d puts that ATG out of frame with the body (in frame if the run were %s); check the assembly there\n",
+        printf $log "START_FRAMESHIFT\t%s %d-%d %s\t%s start, %d nt -> %s %d-%d, %d nt from the ATG where %d guides' N-termini align: a run of %d %s at %d-%d puts that ATG out of frame with the body (in frame if the run were %s); kept as a functional gene, count the run in the reads\n",
             $n, @$r[1 .. 3], $cur, $L, $n, $ns, $ne, $NL, $na, $site[1], $site[2], $rs, $re, $site[3];
-        ($r->[0], $r->[1], $r->[2]) = ("${n}_pseudogene", $ns, $ne); $hpshift{$i} = 1 }
+        ($r->[1], $r->[2]) = ($ns, $ne); $hpshift{$i} = 1 }
 }
 
 # --- 4c. a start the guides carry further upstream -----------------------------------
@@ -824,7 +827,7 @@ if ($o{profile} && -s $o{profile} && $seq) {
 # length no guide copy has, a guide's protein is aligned to the region (tblastn); when its two largest alignments lie in
 # two frames, one after the other along both the protein and the genome, covering >= 85% of the protein, the gene is the
 # span from the start codon of the first to the stop that ends the second, provided ConservedStart::homopolymer_site
-# finds the run between them that restores one frame. It is called <gene>_pseudogene and reported like the start case.
+# finds the run between them that restores one frame. It keeps the gene's name and is reported like the start case.
 if ($o{'guide-seqs'} && -d $o{'guide-seqs'} && %gcds && $seq && !$o{'no-rescue'}) {
     my $tblastn = $o{'blast-bin'} ? "$o{'blast-bin'}/tblastn" : $ENV{BLAST_BIN} ? "$ENV{BLAST_BIN}/tblastn" : (grep { -x $_ } map { "$_/tblastn" } split /:/, $ENV{PATH})[0];
     if ($tblastn && -x $tblastn) { require File::Temp; my $dir = File::Temp::tempdir(CLEANUP => 1);
@@ -847,12 +850,12 @@ if ($o{'guide-seqs'} && -d $o{'guide-seqs'} && %gcds && $seq && !$o{'no-rescue'}
             my $span = substr($win, $st - 1, $en - $st + 1); next unless $INIT{ substr($span, 0, 3) }; my $NL = length $span; next if abs($NL - $glen) > 0.1 * $glen;
             my @site = ConservedStart::homopolymer_site($span) or next; my $ro = $st + $site[0]; my ($jlo, $jhi) = sort { $a <=> $b } ($A->[1], $B->[0]); next unless $ro + $site[1] >= $jlo - 45 && $ro <= $jhi + 45;
             my ($ns, $ne) = $d eq '+' ? ($ws + $st - 1, $ws + $en - 1) : ($we - $en + 1, $we - $st + 1); my ($rs, $re) = hp_report($n, $ns, $ne, $d, \@site, 'inside the gene');
-            printf $log "HOMOPOLYMER_FRAMESHIFT\t%s %d-%d %s\t%d nt -> %s_pseudogene %d-%d, %d nt: the protein continues in another frame after a run of %d %s at %d-%d (in frame if the run were %s); check the assembly there\n",
+            printf $log "HOMOPOLYMER_FRAMESHIFT\t%s %d-%d %s\t%d nt -> %s %d-%d, %d nt: the protein continues in another frame after a run of %d %s at %d-%d (in frame if the run were %s); kept as a functional gene, count the run in the reads\n",
                 $n, $s, $e, $d, $L, $n, $ns, $ne, $NL, $site[1], $site[2], $rs, $re, $site[3];
-            ($r->[0], $r->[1], $r->[2]) = ("${n}_pseudogene", $ns, $ne); $hpshift{$i} = 1 } } }
+            ($r->[1], $r->[2]) = ($ns, $ne); $hpshift{$i} = 1 } } }
 if ($o{homopolymers}) { open my $hf, ">", $o{homopolymers} or die "$o{homopolymers}: $!";
     print $hf join("\t", qw(gene gene_start gene_end strand run_start run_end run_length base_forward_strand in_frame_if_run_were where note)), "\n";
-    print $hf join("\t", "$_->[0]_pseudogene", @$_[1 .. 9], "frame lost at this run; the gene is in frame before it and after it. Confirm the run's length in the reads or the assembly"), "\n" for sort { $a->[1] <=> $b->[1] } @hpreport; close $hf }
+    print $hf join("\t", @$_[0 .. 9], "the reading frame shifts at this run; the gene is in frame before it and after it and is kept as a functional gene. Count the run in the reads (tools/check_homopolymers.pl)"), "\n" for sort { $a->[1] <=> $b->[1] } @hpreport; close $hf }
 
 # --- 6. the remnant copy at an IR boundary ---------------------------------------------
 # A gene that crosses an IR boundary leaves a partial second copy in the other IR (ycf1 ~1.2 kb at JSA, rps19, ndhF).

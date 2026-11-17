@@ -18,6 +18,10 @@
 #   REAL        no canonical form exists: the guide protein aligns in two frames
 #               or stops early, or part of the gene is gone; a pseudogene call is
 #               proposed with the evidence
+#   FRAMESHIFT  the reading frame shifts at a homopolymer run and is intact before
+#               and after it. The gene is kept as functional (chloroplasts read
+#               through frameshifts in such runs); the run's position is given so
+#               its length can be counted in the reads (check_homopolymers.pl)
 #   UNRESOLVED  ambiguity codes in the span, an IR boundary inside the gene, or a
 #               spliced gene whose exons cannot be placed; look at the assembly
 #
@@ -134,14 +138,6 @@ sub hp_shift { my ($s, $e, $d, $g) = @_; return () if ($e - $s + 1) % 3; my @pep
     return () unless grep { my $c = $_; grep { abs($NL - $_) <= $tol } @{ $c->{alllens} } } values %{ $gd{$g} };
     my ($ns, $ne) = $d eq '+' ? ($xs + $o, $e) : ($s, $xe - $o);
     return ($ns, $ne, $NL, length $run, substr($run, 0, 1), scalar @anch) }
-# The same gene already called whole: an ATG start, a length that is not a multiple of 3, a run of >= 7
-# within 45 nt after the ATG, the body open in the stop's frame after the run, a guide copy's length.
-# Returns (run length, run base, run position in the CDS).
-sub hp_framed { my ($x, $g) = @_; my $L = length $x; return () unless $L % 3 && substr($x, 0, 3) eq 'ATG';
-    return () unless substr($x, 3, 52) =~ /(A{7,}|C{7,}|G{7,}|T{7,})/; my ($run, $rp) = ($1, $-[0] + 3); return () if $rp > 48;
-    my $p = $rp + length $run; $p++ while ($L - $p) % 3; my $body = translate(substr($x, $p)); return () unless substr($body, -1) eq '*' && index($body, '*') == length($body) - 1;
-    return () unless $gd{$g} && grep { my $c = $_; grep { abs($L - $_) <= 9 } @{ $c->{alllens} } } values %{ $gd{$g} };
-    return (length $run, substr($run, 0, 1), $rp + 1) }
 sub guide_protein { my $g = shift; return @{ $gprot{$g} } if $gprot{$g}; for my $name (sort keys %{ $gd{$g} || {} }) { my $r = $gd{$g}{$name}; my $gs = guide_seq($name) or next;
         my $x = ''; for my $e (sort { $a->[0] <=> $b->[0] } @{ $r->{ex} }) { $x .= substr($gs, $e->[0] - 1, $e->[1] - $e->[0] + 1) } $x = rc($x) if $r->{d} eq '-';
         my $p = translate($x); $p =~ s/\*$//; next if $p =~ /\*/ || length($p) < 20; $gprot{$g} = [$name, $p, $r->{len}]; return @{ $gprot{$g} } } $gprot{$g} = []; () }
@@ -234,9 +230,10 @@ sub emit { my ($name, $s, $e, $d, $st, $flags, $ev, $edit) = @_; $count{$st}++; 
 sub rowname { my $f = shift; my @ex = @{ $f->{ex} }; @ex > 1 ? "$f->{gene} (" . scalar(@ex) . " exons)" : $f->{gene} }
 
 for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d}); my @ex = sort { $a->[0] <=> $b->[0] } @{ $f->{ex} }; my ($s, $e) = ($ex[0][0], $ex[-1][1]);
-    if ($f->{pseudo}) {   # a pseudogene whose frame is lost at a homopolymer run says where (the post filter's <prefix>_homopolymers.tsv)
+    if ($f->{pseudo}) {   # named a pseudogene only for a frameshift at a homopolymer run: such a gene keeps its name
         if (@ex == 1) { if (my @site = ConservedStart::homopolymer_site(spliced($d, [$s, $e]))) { my ($rs, $re) = $d eq '+' ? ($s + $site[0], $s + $site[0] + $site[1] - 1) : ($e - $site[0] - $site[1] + 1, $e - $site[0]);
-                emit(rowname($f), $s, $e, $d, 'PSEUDOGENE', "frame lost at a run of $site[1] $site[2] at $rs-$re", "in frame before the run and after it; one intact frame if the run were $site[3] long. Confirm the run's length in the reads or the assembly"); next } }
+                (my $base = $g) =~ s/_pseudogene$//;
+                emit(rowname($f), $s, $e, $d, 'ARTIFACT', "frame shifts at a run of $site[1] $site[2] at $rs-$re", "in frame before the run and after it; one intact frame if the run were $site[3] long. A frameshift at a homopolymer run alone does not make the gene a pseudogene: it keeps the name $base", "rename\t$ex[0][2]\t$s\t$e\t$base"); next } }
         emit(rowname($f), $s, $e, $d, 'PSEUDOGENE', '', 'annotated as a pseudogene; not re-tested'); next }
     if ($f->{rna} && $g =~ /^rrn/) {   # the same rRNA on the other strand at this locus: the operon's strand (the nearest other rRNA) decides
         my ($twin) = grep { my $o2 = $feat{$_}; $_ ne $key && $o2->{gene} eq $g && $o2->{d} ne $d && grep { my $x = $_; my $lo = $x->[0] > $s ? $x->[0] : $s; my $hi = $x->[1] < $e ? $x->[1] : $e; $hi - $lo + 1 > 0.5 * ($e - $s + 1) } @{ $o2->{ex} } } keys %feat;
@@ -270,15 +267,16 @@ for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d});
     # a second, much shorter copy of a gene another copy carries in full: the IR-boundary remnant
     my $other_full = 0; for my $k (keys %feat) { next if $k eq $key; my $o2 = $feat{$k}; next unless $o2->{gene} eq $g; my $L2 = 0; $L2 += $_->[1] - $_->[0] + 1 for @{ $o2->{ex} }; $other_full = 1 if $L2 > 1.5 * $L && abs($L2 - $want) <= 0.1 * $want }
     push @fl, "partial second copy" if $other_full && $L < 0.5 * $want;
-    # a start put out of frame by a homopolymer run: the gene is a pseudogene spanning start codon to stop. Called whole
-    # under the gene's name it is renamed; called anywhere else (an internal ATG, an upstream TTG/ATA/AAT in the body's
-    # frame) it is moved to the whole gene and renamed
+    # a frame that shifts at a homopolymer run: the gene keeps its name and spans start codon to stop. Called whole it
+    # is a FRAMESHIFT row that says where the run is; called anywhere else (an internal ATG, an upstream TTG/ATA/AAT in
+    # the body's frame) it is moved to the whole gene
     if (@ex == 1 && $gd{$g} && !$f->{pseudo}) {
-        if (my ($rl, $rb, $rp) = hp_framed($cds, $g)) { my ($rs, $re) = $d eq '+' ? ($s + $rp - 1, $s + $rp + $rl - 2) : ($e - $rp - $rl + 2, $e - $rp + 1);
-            emit(rowname($f), $s, $e, $d, 'ARTIFACT', join('; ', (grep { !/terminal stop|internal stop/ } @fl), "frame lost at a run of $rl $rb at $rs-$re"),
-                "the row runs from the ATG the guides start $g at to the stop, and a run of $rl $rb at $rs-$re puts that ATG out of frame with the rest: it is a pseudogene as assembled. Confirm the run's length in the reads or the assembly", "rename\t$ex[0][2]\t$s\t$e\t${g}_pseudogene"); next }
+        if ($ii->{mod3} && init_ok($ii->{start}, $g) && grep { my $c = $_; grep { abs($L - $_) <= 0.1 * $_ } @{ $c->{alllens} } } values %{ $gd{$g} }) {
+            if (my @site = ConservedStart::homopolymer_site($cds)) { my ($rs, $re) = $d eq '+' ? ($s + $site[0], $s + $site[0] + $site[1] - 1) : ($e - $site[0] - $site[1] + 1, $e - $site[0]);
+                emit(rowname($f), $s, $e, $d, 'FRAMESHIFT', "frame shifts at a run of $site[1] $site[2] at $rs-$re",
+                    "the row runs from the start codon to the stop, in frame before the run and after it; one intact frame if the run were $site[3] long. Kept as a functional gene. Count the run in the reads (check_homopolymers.pl)"); next } }
         if (my ($ns, $ne, $NL, $rl, $rb, $na) = hp_shift($s, $e, $d, $g)) { emit(rowname($f), $s, $e, $d, 'ARTIFACT', join('; ', @fl, "start frameshifted by a run of $rl $rb"),
-                "the ATG at " . ($d eq '+' ? $ns : $ne) . ", where $na guides' N-termini align, is out of frame with the body: a run of $rl $rb follows it. The call took " . ($NL > $L ? "an internal $ii->{start}, " . ($NL - $L) . " nt short" : "the $ii->{start} " . ($L - $NL) . " nt upstream, in the body's frame") . "; the whole gene is $NL nt from that ATG, a pseudogene as assembled", "move\t$ex[0][2]\t$s\t$e\t$ns\t$ne ; rename\t$ex[0][2]\t$ns\t$ne\t${g}_pseudogene"); next } }
+                "the ATG at " . ($d eq '+' ? $ns : $ne) . ", where $na guides' N-termini align, is out of frame with the body: a run of $rl $rb follows it. The call took " . ($NL > $L ? "an internal $ii->{start}, " . ($NL - $L) . " nt short" : "the $ii->{start} " . ($L - $NL) . " nt upstream, in the body's frame") . "; the whole gene is $NL nt from that ATG and keeps its name", "move\t$ex[0][2]\t$s\t$e\t$ns\t$ne"); next } }
     # splice junctions where the proteins of other orders place them (post filter section 4a; ConservedStart::fix_junctions)
     if (@ex > 1 && !$ii->{mod3} && $JREFS && $JREFS->{$g} && !grep { $_->[2] !~ /_exon\d+$/ } @ex) {
         my @tx = sort { ($a->[2] =~ /_exon(\d+)$/)[0] <=> ($b->[2] =~ /_exon(\d+)$/)[0] } @ex;

@@ -3,7 +3,7 @@
 #
 # USAGE: annobtd.sh <plastome.fasta> <prefix> [--family F --order O [--genus G]]
 #            [--db curated|full|hybrid] [-n 8] [--outdir DIR] [--refdb DIR]
-#            [--exclude ACC[,ACC..]] [--allow-congeners]
+#            [--exclude ACC[,ACC..]] [--allow-congeners] [--reads R1.fastq.gz[,R2.fastq.gz]]
 #
 #   <plastome.fasta>  one circular plastome (several records are concatenated, with a
 #                     warning); <prefix> names the output files
@@ -16,6 +16,10 @@
 #                     hybrid:  curated when it holds 3 same-family guides, else full
 #   -n                guides per genome (default 8)
 #   --exclude         accessions never used as guides (e.g. the genome's own record)
+#   --reads           the reads the plastome was assembled from (FASTQ, gzipped or not; two files
+#                     separated by a comma). Every homopolymer run that shifts a gene's reading
+#                     frame is counted in them (tools/check_homopolymers.pl). Where the reads call
+#                     for another run length, the corrected sequence is written and annotated too
 #   --outdir          default ./<prefix>_annobtd
 #   --refdb           reference database directory (default ANNOBTD_REFDB, else refdb/
 #                     beside this script; see fetch_refdb.sh)
@@ -27,8 +31,12 @@
 #   <prefix>_guides.tsv       the guides used and why each was chosen
 #   <prefix>_post_filter.txt  every post-annotation decision (duplicates, names,
 #                             strands, junctions, starts)
-#   <prefix>_homopolymers.tsv genes whose frame is lost at a homopolymer run (called <gene>_pseudogene):
-#                             the run's position and length, to check against the reads
+#   <prefix>_homopolymers.tsv genes whose reading frame shifts at a homopolymer run (kept as functional
+#                             genes under their own names): the run's position and length
+#   <prefix>_homopolymer_reads.tsv   with --reads: each of those runs counted in the reads, with a verdict
+#   <prefix>_corrected.fasta, <prefix>_corrected/   with --reads, when the reads call for another run
+#                             length: the sequence with it applied and that sequence's annotation.
+#                             Use these from then on
 #   <prefix>_checks/          check_annotation.tsv and check_splice.tsv
 #   work/                     the full pipeline run (BLAST, ORFs, logs)
 #
@@ -38,18 +46,27 @@
 set -uo pipefail
 ANNOBTD_DIR="$(cd "$(dirname "$0")" && pwd)"
 FASTA="${1:?usage: annobtd.sh <plastome.fasta> <prefix> [options]}"; PREFIX="${2:?prefix}"; shift 2
-FAM=""; ORD=""; GEN="NA"; DBMODE="hybrid"; NGUIDES=8; OUTDIR=""; REFDB="${ANNOBTD_REFDB:-$ANNOBTD_DIR/refdb}"; EXCL=""; CONGENERS=""
+FAM=""; ORD=""; GEN="NA"; DBMODE="hybrid"; NGUIDES=8; OUTDIR=""; REFDB="${ANNOBTD_REFDB:-$ANNOBTD_DIR/refdb}"; EXCL=""; CONGENERS=""; READS=""; NOCORRECT=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --family) FAM="$2"; shift 2 ;; --order) ORD="$2"; shift 2 ;; --genus) GEN="$2"; shift 2 ;;
         --db) DBMODE="$2"; shift 2 ;; -n) NGUIDES="$2"; shift 2 ;; --outdir) OUTDIR="$2"; shift 2 ;;
         --refdb) REFDB="$2"; shift 2 ;; --exclude) EXCL="$2"; shift 2 ;; --allow-congeners) CONGENERS="--allow-congeners"; shift ;;
+        --reads) READS="$2"; shift 2 ;;
+        # internal: count the runs in the reads but do not correct the sequence (the corrected sequence's own run)
+        --no-correct) NOCORRECT=1; shift ;;
         *) echo "annobtd.sh: unknown option $1" >&2; exit 1 ;;
     esac
 done
 [ -s "$FASTA" ] || { echo "annobtd.sh: cannot read $FASTA" >&2; exit 1; }
 FASTA="$(cd "$(dirname "$FASTA")" && pwd)/$(basename "$FASTA")"
+if [ -n "$READS" ]; then
+    OLDIFS="$IFS"; IFS=','; set -f; for r in $READS; do [ -s "$r" ] || { echo "annobtd.sh: cannot read the reads file $r" >&2; exit 1; }; done; set +f; IFS="$OLDIFS"
+fi
 OUTDIR="${OUTDIR:-$(pwd)/${PREFIX}_annobtd}"; WORK="$OUTDIR/work"; mkdir -p "$WORK/sequenceFiles" "$WORK/files" "$OUTDIR/${PREFIX}_checks"
+# what an earlier run's read check left here must not be mistaken for this run's
+rm -f "$OUTDIR/${PREFIX}_homopolymers.tsv" "$OUTDIR/${PREFIX}_homopolymer_reads.tsv"
+if [ -z "$NOCORRECT" ]; then rm -f "$OUTDIR/${PREFIX}_corrected.fasta"; [ -d "$OUTDIR/${PREFIX}_corrected" ] && rm -rf "$OUTDIR/${PREFIX}_corrected"; fi
 # reference database and tools
 for f in reference_sketches.tsv gene_expect.tsv species_units.tsv species_lengths.tsv all_lengths.tsv taxonomy_consistency.tsv lineage_species_counts.tsv; do
     [ -s "$REFDB/$f" ] || { echo "annobtd.sh: $REFDB/$f is missing. Run $ANNOBTD_DIR/fetch_refdb.sh (or test/refresh_references.sh --install)." >&2; exit 1; }
@@ -100,8 +117,29 @@ RESULT="$WORK/${PREFIX}_VERDANT_cleaned_annotation.txt"
 cp "$RESULT" "$OUTDIR/${PREFIX}_annotation.txt"
 { printf "accession\tfamily\torder\tjaccard\tcompared\tmismatches\tstatus\tspecies\trepresentative\tspecies_mismatch\tnote\n"; cat "$WORK/guide_picks.tsv"; } > "$OUTDIR/${PREFIX}_guides.tsv"
 [ -s "$WORK/${PREFIX}_post_filter.txt" ] && cp "$WORK/${PREFIX}_post_filter.txt" "$OUTDIR/"
-# frameshifts at homopolymer runs (genes called <gene>_pseudogene): where each run is, so the assembly can be checked there
+# frameshifts at homopolymer runs (the genes keep their names): where each run is, so it can be counted in the reads
 [ -s "$WORK/${PREFIX}_homopolymers.tsv" ] && cp "$WORK/${PREFIX}_homopolymers.tsv" "$OUTDIR/"
 for c in check_annotation check_splice; do [ -s "$WORK/${PREFIX}_$c.tsv" ] && cp "$WORK/${PREFIX}_$c.tsv" "$OUTDIR/${PREFIX}_checks/"; done
 awk -F'\t' '$1 !~ /~|^(LSC|SSC|IRA|IRB|FULL)$/ && $1 !~ /_intron/ { n=$1; sub(/_exon[0-9]+$/,"",n); t=(n ~ /^trn/)?"tRNA":(n ~ /^rrn/)?"rRNA":"CDS"; g[t][n]=1 } END { for (t in g) { c=0; for (k in g[t]) c++; printf "  %s genes: %d\n", t, c } }' "$RESULT" 2>/dev/null || true
 echo "annotation -> $OUTDIR/${PREFIX}_annotation.txt" >&2
+# --reads: count each reported run in the reads; where they call for another length, correct the sequence and annotate it
+if [ -n "$READS" ]; then
+    HP="$OUTDIR/${PREFIX}_homopolymers.tsv"; HR="$OUTDIR/${PREFIX}_homopolymer_reads.tsv"; CF="$OUTDIR/${PREFIX}_corrected.fasta"
+    if [ -s "$HP" ] && [ "$(wc -l < "$HP")" -gt 1 ]; then
+        OLDIFS="$IFS"; IFS=','; set -f; set -- $READS; set +f; IFS="$OLDIFS"
+        if [ -n "$NOCORRECT" ]; then perl "$ANNOBTD_DIR/tools/check_homopolymers.pl" "$FASTA" "$HP" --reads "$@" --out "$HR"
+        else perl "$ANNOBTD_DIR/tools/check_homopolymers.pl" "$FASTA" "$HP" --reads "$@" --out "$HR" --fix "$CF"; fi \
+            || { echo "annobtd.sh: the read check failed" >&2; exit 4; }
+        awk -F'\t' 'NR > 1 { printf "  %s: run of %s %s at %s-%s, %s%s (%s)\n", $1, $5, $4, $2, $3, $10, ($11 != "" ? ", " $11 " suggested" : ""), $12 }' "$HR" >&2
+        echo "read check -> $HR" >&2
+        NFIX=$(awk -F'\t' 'NR > 1 && $11 != ""' "$HR" | wc -l | tr -d ' ')
+        if [ -z "$NOCORRECT" ] && [ "$NFIX" -gt 0 ]; then
+            echo "annobtd.sh: the reads call for another length at $NFIX run(s); annotating the corrected sequence $CF" >&2
+            "$ANNOBTD_DIR/annobtd.sh" "$CF" "$PREFIX" --family "$FAM" --order "$ORD" --genus "$GEN" --db "$DBMODE" -n "$NGUIDES" --refdb "$REFDB" \
+                ${EXCL:+--exclude "$EXCL"} $CONGENERS --outdir "$OUTDIR/${PREFIX}_corrected" --reads "$READS" --no-correct || exit $?
+            echo "annobtd.sh: USE THE CORRECTED SEQUENCE from here on: $CF, annotated in $OUTDIR/${PREFIX}_corrected/" >&2
+        else rm -f "$CF"; fi
+    else
+        echo "no gene's reading frame shifts at a homopolymer run; the reads were not needed" >&2
+    fi
+fi
