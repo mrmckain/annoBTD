@@ -19,7 +19,7 @@
 # exons 2 and 3, /exception "trans-splicing"; gene + tRNA or rRNA with /product derived
 # from the name; a *_pseudogene row becomes a gene with /pseudo and a note, and so does a whole\n# CDS whose start a homopolymer run puts out of frame (Liliaceae cemA). Introns and
 # spacer rows are not features.
-use strict; use warnings; use FindBin;
+use strict; use warnings; use FindBin; use lib "$FindBin::Bin/../pipeline"; use ConservedStart;
 my ($ann, $fsa, $seqid, @rest) = @ARGV; die "usage: $0 <annotation.txt> <genome.fsa> <seqid> --out-dir DIR [--organism X] [--modifier k=v]... [--products FILE] [--check]\n" unless $seqid;
 my (%o, @mods); while (@rest) { my $a = shift @rest; if ($a eq '--modifier') { push @mods, shift @rest } elsif ($a eq '--check') { $o{check} = 1 } elsif ($a =~ /^--(.+)$/) { $o{$1} = shift @rest } }
 $o{'out-dir'} //= '.'; mkdir $o{'out-dir'} unless -d $o{'out-dir'};
@@ -52,7 +52,13 @@ my $cds = sub { my ($name, $iv, $d, $exc) = @_; my $x = cds_seq(map { [@$_[0,1],
     if ($start !~ /^(ATG|GTG)$/) { my @s = sort { $a->[0] <=> $b->[0] } @$iv; my ($ps, $pe) = $d eq '+' ? ($s[0][0], $s[0][0] + 2) : ($s[-1][1] - 2, $s[-1][1]); push @out, "\t\t\texception\tRNA editing", "\t\t\ttransl_except\t(pos:" . ($d eq '+' ? "$ps..$pe" : "complement($ps..$pe)") . ",aa:Met)" }
     my $stops = ($p =~ tr/\*//) - (substr($p, -1) eq '*' ? 1 : 0); push @check, sprintf("%s\t%s\t%d nt\tstart %s%s%s", $name, $loc->($iv, $d) =~ s/\n/,/gr, length $x, $start, ($stops ? "\tINTERNAL STOPS $stops" : ""), (substr($p, -1) ne '*' ? "\tNO TERMINAL STOP" : "")) };
 for my $g (@genes) { my ($name, $iv, $d, $ex) = @$g; next if $name eq 'rps12';
-    if ($name =~ /^(.+)_pseudogene$/) { my $base = $1; my ($first, @more) = split /\n/, $loc->($iv, $d); push @out, "$first\tgene", @more, "\t\t\tgene\t$base", "\t\t\tpseudo", "\t\t\tnote\t$base pseudogene"; next }
+    if ($name =~ /^(.+)_pseudogene$/) { my $base = $1; my ($first, @more) = split /\n/, $loc->($iv, $d); my $note = "$base pseudogene";
+        # a frame lost at a homopolymer run (post_filter_annotation.pl sections 4b and 5b): the note says where
+        if (@$iv == 1) { my $x = cds_seq([@{ $iv->[0] }[0, 1], $d]); if (my @site = ConservedStart::homopolymer_site($x)) { my ($s, $e) = @{ $iv->[0] }[0, 1];
+                my ($rs, $re) = $d eq '+' ? ($s + $site[0], $s + $site[0] + $site[1] - 1) : ($e - $site[0] - $site[1] + 1, $e - $site[0]);
+                $note = "$base pseudogene: the reading frame is lost at a run of $site[1] $site[2] at $rs..$re; in frame before the run and after it";
+                push @check, sprintf("%s\t%s\t%d nt\tFRAMESHIFT at a run of %d %s at %d-%d; written as gene /pseudo", $base, $loc->($iv, $d) =~ s/\n/,/gr, length $x, $site[1], $site[2], $rs, $re) } }
+        push @out, "$first\tgene", @more, "\t\t\tgene\t$base", "\t\t\tpseudo", "\t\t\tnote\t$note"; next }
     if ($name =~ /^trn/) { my ($letter) = $name =~ /^trn(fM|[A-Z])/; my ($first, @more) = split /\n/, $loc->($iv, $d); push @out, "$first\tgene", @more, "\t\t\tgene\t$name"; ($first, @more) = split /\n/, $loc->($iv, $d); push @out, "$first\ttRNA", @more, "\t\t\tgene\t$name", "\t\t\tproduct\ttRNA-" . ($aa3{$letter} // 'Xxx'); next }
     if ($name =~ /^rrn(\S+)/) { my $u = $1; my ($first, @more) = split /\n/, $loc->($iv, $d); push @out, "$first\tgene", @more, "\t\t\tgene\t$name"; ($first, @more) = split /\n/, $loc->($iv, $d); push @out, "$first\trRNA", @more, "\t\t\tgene\t$name", "\t\t\tproduct\t${u}S ribosomal RNA"; next }
     $cds->($name, $iv, $d, 0) }

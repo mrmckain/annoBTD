@@ -94,5 +94,11 @@ done < "$RANKING"
 rm -f "$SEQDIR"/.*.gb "$SEQDIR"/.*.fsa "$SEQDIR"/.part.*
 # guide genes that GenBank names wrongly (e.g. psbJ annotated as a second psaJ) take the name the other guides give them
 perl "$HERE/relabel_guides.pl" "$FILEDIR" "$SEQDIR" >&2 || echo "  WARNING: relabel_guides.pl failed; guide names not checked" >&2
+# tRNA genes named and oriented from their sequence against the curated library (GenBank swaps trnG-GCC/trnG-UCC and
+# the CAU tRNAs, and now and then a strand); ANNOBTD_TRNA_LIBRARY_EXCLUDE leaves a benchmark genome's own entries out
+TRNA_LIB="${ANNOBTD_TRNA_LIBRARY:-$HERE/../tables/trna_library.fasta}"
+if [ -z "${ANNOBTD_NO_TRNA_LIBRARY:-}" ] && [ -s "$TRNA_LIB" ]; then
+    perl "$HERE/relabel_guide_trnas.pl" "$FILEDIR" "$SEQDIR" "$TRNA_LIB" >&2 || echo "  WARNING: relabel_guide_trnas.pl failed; guide tRNA names not checked" >&2
+fi
 [ -n "$guides" ] || { echo "ERROR: no guides could be prepared" >&2; exit 1; }
 echo "$guides"

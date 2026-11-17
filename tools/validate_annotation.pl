@@ -27,7 +27,7 @@
 #
 # OUT (tab-separated): feature  start  end  strand  status  flags  evidence  edit  table2asn
 #   edit: one or more verdant_edit.pl rows (without the genome column, fields separated by spaces), joined by " ; "
-use strict; use warnings; use FindBin;
+use strict; use warnings; use FindBin; use lib "$FindBin::Bin/../pipeline"; use ConservedStart;
 
 my ($ann, $fsa, @rest) = @ARGV;
 die "usage: $0 <annotation.txt> <genome.fsa> --guides-dir DIR --guide-seqs DIR [--refdb DIR] [--family F --order O --genus G] [--val FILE] [--out FILE]\n" unless $fsa;
@@ -56,6 +56,11 @@ sub intact_info { my ($x, $g) = @_; my %r = (len => length $x, mod3 => length($x
 my $blast_genome; sub blast_genome { return $blast_genome if $blast_genome; require File::Temp; my ($h, $f) = File::Temp::tempfile(UNLINK => 1); (my $s = $seq) =~ tr/ACGT/N/c; print $h ">genome\n$s\n"; close $h; $blast_genome = $f }
 my $tblastn = $o{'blast-bin'} ? "$o{'blast-bin'}/tblastn" : $ENV{BLAST_BIN} ? "$ENV{BLAST_BIN}/tblastn" : (grep { -x $_ } map { "$_/tblastn" } split /:/, $ENV{PATH})[0];
 die "no tblastn (set --blast-bin or BLAST_BIN)\n" unless $tblastn && -x $tblastn;
+
+# conserved N-termini of the curated genomes (tables/nterm_refs.tsv), the target's own left out (--exclude ACC,... or ANNOBTD_TRNA_LIBRARY_EXCLUDE)
+our $NTREFS = -s "$ANNOBTD/tables/nterm_refs.tsv" ? ConservedStart::load("$ANNOBTD/tables/nterm_refs.tsv", join(',', grep { defined && length } $o{exclude}, $ENV{ANNOBTD_TRNA_LIBRARY_EXCLUDE})) : undef;
+
+our $JREFS = -s "$ANNOBTD/tables/junction_refs.tsv" ? ConservedStart::load_junctions("$ANNOBTD/tables/junction_refs.tsv", join(',', grep { defined && length } $o{exclude}, $ENV{ANNOBTD_TRNA_LIBRARY_EXCLUDE})) : undef;
 
 # ---- canonical names, lineage expectations -----------------------------------------
 my %CANON; { my $f = "$ANNOBTD/tables/plastid_cds_names.txt"; if (open my $ch, "<", $f) { while (<$ch>) { next if /^#/; $CANON{$_} = 1 for split } close $ch } }
@@ -229,7 +234,14 @@ sub emit { my ($name, $s, $e, $d, $st, $flags, $ev, $edit) = @_; $count{$st}++; 
 sub rowname { my $f = shift; my @ex = @{ $f->{ex} }; @ex > 1 ? "$f->{gene} (" . scalar(@ex) . " exons)" : $f->{gene} }
 
 for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d}); my @ex = sort { $a->[0] <=> $b->[0] } @{ $f->{ex} }; my ($s, $e) = ($ex[0][0], $ex[-1][1]);
-    if ($f->{pseudo}) { emit(rowname($f), $s, $e, $d, 'PSEUDOGENE', '', 'annotated as a pseudogene; not re-tested'); next }
+    if ($f->{pseudo}) {   # a pseudogene whose frame is lost at a homopolymer run says where (the post filter's <prefix>_homopolymers.tsv)
+        if (@ex == 1) { if (my @site = ConservedStart::homopolymer_site(spliced($d, [$s, $e]))) { my ($rs, $re) = $d eq '+' ? ($s + $site[0], $s + $site[0] + $site[1] - 1) : ($e - $site[0] - $site[1] + 1, $e - $site[0]);
+                emit(rowname($f), $s, $e, $d, 'PSEUDOGENE', "frame lost at a run of $site[1] $site[2] at $rs-$re", "in frame before the run and after it; one intact frame if the run were $site[3] long. Confirm the run's length in the reads or the assembly"); next } }
+        emit(rowname($f), $s, $e, $d, 'PSEUDOGENE', '', 'annotated as a pseudogene; not re-tested'); next }
+    if ($f->{rna} && $g =~ /^rrn/) {   # the same rRNA on the other strand at this locus: the operon's strand (the nearest other rRNA) decides
+        my ($twin) = grep { my $o2 = $feat{$_}; $_ ne $key && $o2->{gene} eq $g && $o2->{d} ne $d && grep { my $x = $_; my $lo = $x->[0] > $s ? $x->[0] : $s; my $hi = $x->[1] < $e ? $x->[1] : $e; $hi - $lo + 1 > 0.5 * ($e - $s + 1) } @{ $o2->{ex} } } keys %feat;
+        if ($twin) { my ($nbr, $nd); for my $k (keys %feat) { my $o2 = $feat{$k}; next unless $o2->{rna} && $o2->{gene} =~ /^rrn/ && $o2->{gene} ne $g; my $dist = abs($o2->{ex}[0][0] - $s); next if $dist > 8000; ($nbr, $nd) = ($o2, $dist) if !defined $nd || $dist < $nd }
+            if ($nbr && $nbr->{d} ne $d) { emit(rowname($f), $s, $e, $d, 'ARTIFACT', 'called on both strands', "$g is also called at this locus on the $nbr->{d} strand, the strand of $nbr->{gene} beside it: this row is the wrong-strand duplicate", join(' ; ', map { "delete\t$_->[2]\t$_->[0]\t$_->[1]\t$d" } @ex)); next } } }
     if ($f->{rna}) { my @fl; my $L = 0; $L += $_->[1] - $_->[0] + 1 for @ex; my $gl = guide_len($g);
         my $anyg = $gd{$g} ? grep { my $c = $_; grep { abs($L - $_) <= 3 } @{ $c->{alllens} } } values %{ $gd{$g} } : 0;   # a length some guide copy carries (the 57 nt second trnfM-CAU of the grasses)
         push @fl, sprintf("length %d vs guides %d", $L, $gl) if $gl && !$anyg && ($g =~ /^trn/ ? (abs($L - $gl) > 0.2 * $gl && ($L < 68 || $L > 95)) : abs($L - $gl) > 0.05 * $gl);
@@ -258,13 +270,38 @@ for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d});
     # a second, much shorter copy of a gene another copy carries in full: the IR-boundary remnant
     my $other_full = 0; for my $k (keys %feat) { next if $k eq $key; my $o2 = $feat{$k}; next unless $o2->{gene} eq $g; my $L2 = 0; $L2 += $_->[1] - $_->[0] + 1 for @{ $o2->{ex} }; $other_full = 1 if $L2 > 1.5 * $L && abs($L2 - $want) <= 0.1 * $want }
     push @fl, "partial second copy" if $other_full && $L < 0.5 * $want;
-    # a start put out of frame by a homopolymer run: called whole it is UNRESOLVED; called anywhere else
-    # (an internal ATG, an upstream TTG/ATA/AAT in the body's frame) it moves to the whole gene
+    # a start put out of frame by a homopolymer run: the gene is a pseudogene spanning start codon to stop. Called whole
+    # under the gene's name it is renamed; called anywhere else (an internal ATG, an upstream TTG/ATA/AAT in the body's
+    # frame) it is moved to the whole gene and renamed
     if (@ex == 1 && $gd{$g} && !$f->{pseudo}) {
-        if (my ($rl, $rb, $rp) = hp_framed($cds, $g)) { emit(rowname($f), $s, $e, $d, 'UNRESOLVED', join('; ', (grep { !/terminal stop|internal stop/ } @fl), "start frameshifted by a run of $rl $rb"),   # the stops are the start's frame read past the run
-                "the CDS runs from the ATG the guides start $g at to the stop: a run of $rl $rb at CDS position $rp puts that ATG out of frame with the body (the run's length differs between plastomes of the lineage; when it is a multiple of 3 the gene is intact). Whether slippage on the run restores the frame, translation begins at a downstream ATG, or $g is a pseudogene cannot be told from the sequence: confirm the run's length in the reads; for GenBank the CDS needs /pseudo or a /ribosomal_slippage join"); next }
+        if (my ($rl, $rb, $rp) = hp_framed($cds, $g)) { my ($rs, $re) = $d eq '+' ? ($s + $rp - 1, $s + $rp + $rl - 2) : ($e - $rp - $rl + 2, $e - $rp + 1);
+            emit(rowname($f), $s, $e, $d, 'ARTIFACT', join('; ', (grep { !/terminal stop|internal stop/ } @fl), "frame lost at a run of $rl $rb at $rs-$re"),
+                "the row runs from the ATG the guides start $g at to the stop, and a run of $rl $rb at $rs-$re puts that ATG out of frame with the rest: it is a pseudogene as assembled. Confirm the run's length in the reads or the assembly", "rename\t$ex[0][2]\t$s\t$e\t${g}_pseudogene"); next }
         if (my ($ns, $ne, $NL, $rl, $rb, $na) = hp_shift($s, $e, $d, $g)) { emit(rowname($f), $s, $e, $d, 'ARTIFACT', join('; ', @fl, "start frameshifted by a run of $rl $rb"),
-                "the ATG at " . ($d eq '+' ? $ns : $ne) . ", where $na guides' N-termini align, is out of frame with the body: a run of $rl $rb follows it. The call took " . ($NL > $L ? "an internal $ii->{start}, " . ($NL - $L) . " nt short" : "the $ii->{start} " . ($L - $NL) . " nt upstream, in the body's frame") . "; the whole gene is $NL nt from that ATG (not a multiple of 3, reported UNRESOLVED once moved)", "move\t$ex[0][2]\t$s\t$e\t$ns\t$ne"); next } }
+                "the ATG at " . ($d eq '+' ? $ns : $ne) . ", where $na guides' N-termini align, is out of frame with the body: a run of $rl $rb follows it. The call took " . ($NL > $L ? "an internal $ii->{start}, " . ($NL - $L) . " nt short" : "the $ii->{start} " . ($L - $NL) . " nt upstream, in the body's frame") . "; the whole gene is $NL nt from that ATG, a pseudogene as assembled", "move\t$ex[0][2]\t$s\t$e\t$ns\t$ne ; rename\t$ex[0][2]\t$ns\t$ne\t${g}_pseudogene"); next } }
+    # splice junctions where the proteins of other orders place them (post filter section 4a; ConservedStart::fix_junctions)
+    if (@ex > 1 && !$ii->{mod3} && $JREFS && $JREFS->{$g} && !grep { $_->[2] !~ /_exon\d+$/ } @ex) {
+        my @tx = sort { ($a->[2] =~ /_exon(\d+)$/)[0] <=> ($b->[2] =~ /_exon(\d+)$/)[0] } @ex;
+        if (!grep { ($tx[$_][2] =~ /_exon(\d+)$/)[0] != $_ + 1 } 0 .. $#tx) { my ($new, $chg) = ConservedStart::fix_junctions($JREFS->{$g}, \$seq, $d, [map { [$_->[0], $_->[1]] } @tx]);
+            if (@$chg) { my @edits; for my $k (0 .. $#tx) { push @edits, "move\t$tx[$k][2]\t$tx[$k][0]\t$tx[$k][1]\t$new->[$k][0]\t$new->[$k][1]" if $tx[$k][0] != $new->[$k][0] || $tx[$k][1] != $new->[$k][1] }
+                emit(rowname($f), $s, $e, $d, 'ARTIFACT', join('; ', @fl, "junction not where other orders' proteins place it"), join('; ', map { "exon$_->[0]|exon" . ($_->[0] + 1) . " $_->[1]|$_->[2] -> $_->[3]|$_->[4] ($_->[5])" } @$chg) . "; the spliced CDS stays intact", join(" ; ", @edits)); next } } }
+    # a start no distant lineage shares (post filter section 4d): trimmed to where two orders of the curated references start the protein
+    if (!$ii->{mod3} && $NTREFS && $NTREFS->{$g} && (@ex == 1 || $ex[0][2] =~ /_exon1$/ || $ex[-1][2] =~ /_exon1$/)) {
+        my $first = @ex == 1 ? $ex[0] : ($d eq '+' ? $ex[0] : $ex[-1]); my ($fs, $fe) = @$first[0, 1]; my $whole = @ex == 1 ? 1 : 0; my $FL = $fe - $fs + 1;
+        my $maxdown = int(($FL - ($whole ? 90 : 60)) / 3); $maxdown = 60 if $maxdown > 60;
+        if (($whole || $FL >= 90) && $maxdown >= 6) { my $avail = $d eq '+' ? $fs - 1 : $len - $fe; my $up = $avail < 45 ? $avail - $avail % 3 : 45;
+            my ($xs, $xe) = $d eq '+' ? ($fs - $up, $fe) : ($fs, $fe + $up); my $k0 = $up / 3; my $x = spliced($d, [$xs, $xe]);
+            my $an = ConservedStart::anchors($NTREFS->{$g}, $x, $k0 + $maxdown + 33); my $cur = substr($x, 3 * $k0, 3);
+            my $c = !init_ok($cur, $g) ? ConservedStart::near_start($an, $x, $k0, $EDITABLE{$g}, $whole) : undef; $c //= ConservedStart::trim($an, $x, $k0, $maxdown, $EDITABLE{$g}, $whole);
+            if ($c) {
+                my ($ns, $ne) = $d eq '+' ? ($xs + 3 * $c->{pos}, $fe) : ($fs, $xe - 3 * $c->{pos});
+                emit(rowname($f), $s, $e, $d, 'ARTIFACT', join('; ', @fl, "start not at the conserved N-terminus"), ($c->{pos} > $k0 + 5 ? "no order of the curated references starts the protein at the call's start" : "the call begins $cur beside the conserved start") . "; $c->{orders} start it " . ($c->{pos} - $k0) . " codons " . ($c->{pos} >= $k0 ? "downstream" : "upstream") . ", at the $c->{codon} at " . ($d eq '+' ? $ns : $ne), "move\t$first->[2]\t$fs\t$fe\t$ns\t$ne"); next } } }
+    # a start inside the protein (post filter section 4e): no order starts the protein near the call's start, two upstream
+    if (!$ii->{mod3} && $NTREFS && $NTREFS->{$g} && @ex == 1) { my @gl = ($gd{$g} ? map { $_->{len} } values %{ $gd{$g} } : ()); my ($glong) = sort { $b <=> $a } (($E // 0), profile_lengths($g), @gl);
+        if ($glong && $glong > $L + 30) { my $avail = $d eq '+' ? $s - 1 : $len - $e; my $up = $glong - $L + 90; $up = 6000 if $up > 6000; $up = $avail if $up > $avail; $up -= $up % 3;
+            if ($up >= 33) { my ($xs, $xe) = $d eq '+' ? ($s - $up, $e) : ($s, $e + $up); my $x = spliced($d, [$xs, $xe]); my $k0 = $up / 3;
+                if (my $c = ConservedStart::extend(ConservedStart::anchors($NTREFS->{$g}, $x, $k0 + 40), $x, $k0, $EDITABLE{$g})) { my ($ns, $ne) = $d eq '+' ? ($xs + 3 * $c->{pos}, $e) : ($s, $xe - 3 * $c->{pos});
+                    emit(rowname($f), $s, $e, $d, 'ARTIFACT', join('; ', @fl, "start inside the protein"), "no order of the curated references starts the protein near the call's start; $c->{orders} start it " . ($k0 - $c->{pos}) . " codons upstream, at the $c->{codon} at " . ($d eq '+' ? $ns : $ne) . ": " . ($ne - $ns + 1) . " nt", "move\t$ex[0][2]\t$s\t$e\t$ns\t$ne"); next } } } }
     # a start the guides carry further upstream (post_filter_annotation.pl section 4c): most guides' N-termini align
     # more than 10 codons upstream of the call, and an in-frame ATG sits within 10 codons of where they align
     if (@ex == 1 && $gd{$g} && !$ii->{mod3}) { my @gl = map { $_->{len} } values %{ $gd{$g} }; my $longer = grep { $_ > $L + 30 } @gl; my @peps = guide_nterms($g);
@@ -276,6 +313,9 @@ for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d});
                     for my $c (sort { abs($a - $med) <=> abs($b - $med) || $a <=> $b } grep { $_ >= 0 && $_ < $k0 } ($med - 10 .. $med + 10)) { my $cod = substr($x, 3 * $c, 3);
                         next unless $cod eq 'ATG' || ($cod eq 'ACG' && $EDITABLE{$g}); next if translate(substr($x, 3 * $c, 3 * ($k0 - $c))) =~ /\*/;
                         my ($ns, $ne) = $d eq '+' ? ($xs + 3 * $c, $e) : ($s, $xe - 3 * $c); $best = [$ns, $ne, $ne - $ns + 1, $cod, scalar @upa, scalar @peps]; last } } }
+            # the conserved-N-terminus veto (ConservedStart::veto_extension): two orders start the protein where the call starts, none upstream
+            if ($best && $NTREFS && $NTREFS->{$g} && $up >= 33) { my ($xs2, $xe2) = $d eq '+' ? ($s - $up, $e) : ($s, $e + $up); my $x2 = spliced($d, [$xs2, $xe2]);
+                $best = undef if ConservedStart::veto_extension(ConservedStart::anchors($NTREFS->{$g}, $x2, $up / 3 + 30), $up / 3) }
             if ($best && intact_info(spliced($d, [$best->[0], $best->[1]]), $g)->{intact}) {
                 emit(rowname($f), $s, $e, $d, 'ARTIFACT', join('; ', @fl, "start downstream of the guides'"), "$best->[4] of $best->[5] guides' N-termini align more than 10 codons upstream of this $L nt call (guides carry " . join(',', sort { $a <=> $b } @gl) . " nt); the in-frame $best->[3] there, at " . ($d eq '+' ? $best->[0] : $best->[1]) . ", gives an intact $best->[2] nt CDS", "move\t$ex[0][2]\t$s\t$e\t$best->[0]\t$best->[1]"); next } } }
     unless (@fl) { emit(rowname($f), $s, $e, $d, 'PASS', '', ''); next }

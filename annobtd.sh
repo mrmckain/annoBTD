@@ -27,6 +27,8 @@
 #   <prefix>_guides.tsv       the guides used and why each was chosen
 #   <prefix>_post_filter.txt  every post-annotation decision (duplicates, names,
 #                             strands, junctions, starts)
+#   <prefix>_homopolymers.tsv genes whose frame is lost at a homopolymer run (called <gene>_pseudogene):
+#                             the run's position and length, to check against the reads
 #   <prefix>_checks/          check_annotation.tsv and check_splice.tsv
 #   work/                     the full pipeline run (BLAST, ORFs, logs)
 #
@@ -98,6 +100,8 @@ RESULT="$WORK/${PREFIX}_VERDANT_cleaned_annotation.txt"
 cp "$RESULT" "$OUTDIR/${PREFIX}_annotation.txt"
 { printf "accession\tfamily\torder\tjaccard\tcompared\tmismatches\tstatus\tspecies\trepresentative\tspecies_mismatch\tnote\n"; cat "$WORK/guide_picks.tsv"; } > "$OUTDIR/${PREFIX}_guides.tsv"
 [ -s "$WORK/${PREFIX}_post_filter.txt" ] && cp "$WORK/${PREFIX}_post_filter.txt" "$OUTDIR/"
+# frameshifts at homopolymer runs (genes called <gene>_pseudogene): where each run is, so the assembly can be checked there
+[ -s "$WORK/${PREFIX}_homopolymers.tsv" ] && cp "$WORK/${PREFIX}_homopolymers.tsv" "$OUTDIR/"
 for c in check_annotation check_splice; do [ -s "$WORK/${PREFIX}_$c.tsv" ] && cp "$WORK/${PREFIX}_$c.tsv" "$OUTDIR/${PREFIX}_checks/"; done
 awk -F'\t' '$1 !~ /~|^(LSC|SSC|IRA|IRB|FULL)$/ && $1 !~ /_intron/ { n=$1; sub(/_exon[0-9]+$/,"",n); t=(n ~ /^trn/)?"tRNA":(n ~ /^rrn/)?"rRNA":"CDS"; g[t][n]=1 } END { for (t in g) { c=0; for (k in g[t]) c++; printf "  %s genes: %d\n", t, c } }' "$RESULT" 2>/dev/null || true
 echo "annotation -> $OUTDIR/${PREFIX}_annotation.txt" >&2

@@ -5,7 +5,7 @@
 #   edits.tsv rows (tab separated; a first column naming the genome is ignored):
 #     rename  <name>  <start> <end>  <new_name>        e.g. rps16_exon1 4902 4941 rps16_pseudogene
 #     add     <name>  <start> <end>  <strand>          a new feature row
-#     delete  <name>  <start> <end>
+#     delete  <name>  <start> <end>  [<strand>, when the same row exists on both strands]
 #     move    <name>  <start> <end>  <new_start> <new_end>
 #   A row is matched by name and both coordinates. Spacer rows (geneA~geneB) are
 #   rebuilt from the surviving features; LSC/SSC/IRA/IRB/FULL rows are kept.
@@ -22,7 +22,9 @@ while (<$e>) { chomp; next if /^#/ || !/\S/; my @f = split /\t/; shift @f unless
     my ($act, $name, $s, $e2, @x) = @f;
     if ($act eq 'add') { if (grep { $_->[0] eq $name && $_->[1] == $s && $_->[2] == $e2 && $_->[3] eq $x[0] } @rows) { $missed++; next }   # already there: an add is idempotent
         push @rows, [$name, $s, $e2, $x[0]]; $applied++; next }
-    my ($i) = grep { $rows[$_][0] eq $name && $rows[$_][1] == $s && $rows[$_][2] == $e2 } 0 .. $#rows;
+    # a delete may name the strand, for a locus called on both
+    my $want_d = ($act eq 'delete' && defined $x[0] && $x[0] =~ /^[+-]$/) ? $x[0] : '';
+    my ($i) = grep { $rows[$_][0] eq $name && $rows[$_][1] == $s && $rows[$_][2] == $e2 && (!$want_d || $rows[$_][3] eq $want_d) } 0 .. $#rows;
     unless (defined $i) { warn "no row $name $s-$e2 in $ann\n"; $missed++; next }
     if ($act eq 'rename') { $rows[$i][0] = $x[0] } elsif ($act eq 'delete') { splice @rows, $i, 1 } elsif ($act eq 'move') { ($rows[$i][1], $rows[$i][2]) = @x[0, 1] }
     $applied++ } close $e;

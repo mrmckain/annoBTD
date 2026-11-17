@@ -158,21 +158,44 @@ stops early, or part of the gene is gone: a pseudogene call with the evidence) o
 that cannot be placed: look at the assembly). Canonical genes the guides carry but
 the annotation lacks are tested the same way.
 
-Starts are not taken from one guide on trust. A rare start codon (TTG, ATA, ...) is
-kept only when at least half of the guides carrying the gene begin their own copy
-with it; otherwise the start moves to the in-frame ATG where the other guides'
-N-termini align. A call that starts more than 10 codons downstream of where most
-guides' N-termini align moves up to the in-frame ATG there (Liliaceae ndhK called at
-783 nt from one guide, where the other seven carry the 879-894 nt copy). Genes may
-overlap: an overlap the guides carry too (ndhK/ndhC, psbD/psbC, atpE/atpB) is not
-flagged. And a
-gene whose ATG is followed by a homopolymer run that is not a multiple of 3 (cemA
-in the Liliaceae: 9 to 25 A after the ATG, varying even within *Lilium*) is called
-whole, from that ATG to the stop, so its length is not a multiple of 3. The
-validator reports it `UNRESOLVED` (confirm the run's length in the reads), and
-`tools/annobtd2tbl.pl` writes it as a gene with /pseudo and a note. Older calls of
-such a gene at an internal ATG or an upstream TTG/ATA/AAT come out `ARTIFACT`, with
-the move to the whole gene as the fix. With `--val`, table2asn's validator
+Starts, junctions and RNA genes are not taken from one guide on trust, and a genome's own
+GenBank record, when it is among the guides, is one vote like any other (ten *Lilium* GenBank
+genomes annotated with and without their own record now differ in none of ~1,280 features):
+- **Curated references.** `tables/nterm_refs.tsv` and `tables/junction_refs.tsv` hold the first
+  30 aa of every protein and the peptides either side of every cis-splice junction of the 51
+  hand-curated genomes, eight orders from *Marchantia* to the grasses and Asparagaceae
+  (`refdb_build/build_nterm_refs.pl`, `build_junction_refs.pl`; `pipeline/ConservedStart.pm`).
+  One order is one vote, however many genomes it has.
+- **Starts.** A rare start codon (TTG, ATA, ...) is kept only when at least half of the guides
+  begin their own copy with it; one beside an ATG where two orders start the protein moves
+  there. A call starting more than 10 codons downstream of where most guides' N-termini align
+  moves up (rpl22, ndhD, rpoB called inside the protein), unless two orders already start the
+  protein where the call starts and none upstream. A start no order shares is trimmed to where
+  two orders start (rbcL at MSPQTE..., not an upstream ATG some records use); a call inside the
+  protein is extended (ycf1, which most Liliaceae RefSeq records keep only as a pseudogene).
+- **Splice junctions.** A junction a codon or two off changes the protein at the junction, so
+  it moves to the donor and acceptor that two or more orders' proteins agree on (petB exon 2
+  is 648, 642 or 657 nt in Liliaceae GenBank; cytochrome b6 is MS|KVYDWF... everywhere). A
+  first exon too short to align (petB, petD, rpl16) takes the references' length.
+- **tRNAs and rRNAs.** Guide tRNAs are named and oriented from their sequence against the
+  curated library when they are fetched (`guides/relabel_guide_trnas.pl`: GenBank swaps
+  trnG-GCC/trnG-UCC and now and then a strand). The missing exon of a spliced tRNA is placed
+  from the guides; an rRNA called on both strands keeps the strand of the rRNA beside it; rRNA
+  ends follow the guides' majority. Intron rows are rebuilt from the exons.
+- **IR-boundary remnants.** The partial second copy of a gene that crosses an IR boundary
+  (ycf1, ~1.2 kb) is not called, as in the curated genomes.
+- **Frameshifts at homopolymer runs.** When a gene's reading frame is lost at a run of 7 or
+  more identical bases (cemA in the Liliaceae, 9 to 25 A right after the ATG, varying even
+  within *Lilium*; a *Lilium* ndhF with 11 T where its relatives carry 7), the gene is called
+  whole, from its start codon to its stop, in frame before the run and in frame after it, and
+  named `<gene>_pseudogene`. `<prefix>_homopolymers.tsv` lists each one with the run's
+  coordinates, length and the lengths that would restore the frame, so the assembly can be
+  checked there. The validator repeats the run's position on the pseudogene row, and
+  `tools/annobtd2tbl.pl` writes a gene with /pseudo and a note naming the run. Older calls of
+  such a gene (an internal ATG, an upstream TTG/ATA/AAT, the whole span under the gene's own
+  name) come out `ARTIFACT` with the move and rename as the fix.
+
+With `--val`, table2asn's validator
 messages for the same features are attached. `test/validate_truth.sh` scores the
 verdicts against a project's hand edits (see `test/README.md`).
 
