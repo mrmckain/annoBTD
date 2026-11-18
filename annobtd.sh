@@ -27,7 +27,9 @@
 # OUTPUT (in --outdir):
 #   <prefix>_annotation.txt   gene<TAB>start<TAB>end<TAB>strand, 1-based, inclusive;
 #                             exons as gene_exonN, introns as gene_intronN, spacers as
-#                             geneA~geneB, plus LSC/SSC/IRA/IRB/FULL region rows
+#                             geneA~geneB, plus LSC/SSC/IRA/IRB/FULL region rows (a region that
+#                             crosses the record's origin is two rows with the same name; no
+#                             LSC/SSC/IRA/IRB rows when the plastome has no inverted repeat)
 #   <prefix>_guides.tsv       the guides used and why each was chosen
 #   <prefix>_post_filter.txt  every post-annotation decision (duplicates, names,
 #                             strands, junctions, starts)

@@ -863,7 +863,10 @@ if ($o{homopolymers}) { open my $hf, ">", $o{homopolymers} or die "$o{homopolyme
 # always proposed deleting it. A single-row CDS less than half as long as another copy of the same gene, with that
 # other copy at least 1.5 times its length, lying within 150 nt of an IR boundary, is dropped.
 { my %byname; for my $i (@feat) { next if $drop{$i}; my $n = $rows[$i][0]; next if $n =~ /^(trn|rrn)/ || $n =~ /_intron|_exon|_pseudog|~/; push @{ $byname{$n} }, $i }
-  my @bnd = map { @$_ } @ir;
+  # the boundaries of the IR copies. A copy that crosses the record's origin is two rows (x-L and 1-y): L and 1 are the
+  # origin, not boundaries.
+  my @bnd; for my $nm (qw(IRA IRB)) { my @p = grep { $_->[0] eq $nm } @rows; my $wrap = @p == 2 && $p[0][2] == $len && $p[1][1] == 1;
+      push @bnd, $wrap ? ($p[0][1], $p[1][2]) : map { @$_[1, 2] } @p }
   for my $n (sort keys %byname) { my @c = @{ $byname{$n} }; next unless @c >= 2;
       for my $i (@c) { my $L = $rows[$i][2] - $rows[$i][1] + 1; my ($full) = grep { $_ != $i && !$drop{$_} && ($rows[$_][2] - $rows[$_][1] + 1) >= 1.5 * $L && $L < 0.5 * ($rows[$_][2] - $rows[$_][1] + 1) } @c; next unless defined $full;
           next unless grep { $_ >= $rows[$i][1] - 150 && $_ <= $rows[$i][2] + 150 } @bnd;

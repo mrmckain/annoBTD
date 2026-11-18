@@ -1,5 +1,6 @@
 #!/usr/bin/perl -w
 use strict;
+use FindBin; use lib $FindBin::Bin; use PlastomeRegions;
 
 my %blastgenes;
 my %blastrnas;
@@ -602,50 +603,13 @@ $final_annotation{$prev_end+1}{length($plastome)}{"+"}=$prev . "~End";
 
 
 
-my $lsc;
-my $ssc;
-my $irb;
-my $ira;
-
-my $boundary1= substr(reverse($plastome), 0, 20);
-$boundary1 =~ tr/ATCGatcg/TAGCtagc/;
-my $start_irb = index($plastome, $boundary1);
-
-$lsc = substr($plastome, 0, $start_irb);
-
-my $i = $start_irb;
-
-my $irb_end = substr($plastome, $i, 20);
-$irb_end = reverse($irb_end);
-$irb_end =~ tr/ATCGatcg/TAGCtagc/;
-
-# Walk until the 20-mer's reverse complement no longer occurs, but stop at the end of
-# the sequence: an assembly whose inverted repeat runs to its last base (a terminal
-# inverted duplication) made substr return an empty pattern, which matches anything,
-# and this loop ran forever, writing two warnings per turn to the log (56 GB).
-my $plen = length $plastome;
-until ($i + 20 > $plen || length($irb_end) < 20 || $plastome !~ /$irb_end/) {
-	$i++;
-	$irb_end = substr($plastome, $i, 20);
-	$irb_end = reverse($irb_end);
-	$irb_end =~ tr/ATCGatcg/TAGCtagc/;
-}
-warn "IR boundary search ran to the end of the sequence: the inverted repeat reaches the last base; region rows will be unreliable\n" if $i + 20 > $plen;
-$i--;
-$irb_end = substr($plastome, $i, 20);
-$irb = substr($plastome, $start_irb, ($i+20-$start_irb));
-my $ira_seq = $irb_end;
-$ira_seq = reverse($ira_seq);
-$ira_seq =~ tr/ATCGatcg/TAGCtagc/;
-my $ira_start = index($plastome, $ira_seq);
-$ssc = substr($plastome, $i+20, $ira_start-($i+20));
-$ira= substr($plastome, $ira_start);
-
-
-my $lsc_range = (index($plastome, $lsc)+1) . "-" . (index($plastome, $lsc)+length($lsc));
-my $ssc_range = (index($plastome, $ssc)+1) . "-" . (index($plastome, $ssc)+length($ssc));
-my $ira_range = (index($plastome, $ira)+1) . "-" . (index($plastome, $ira)+length($ira));
-my $irb_range = (index($plastome, $irb)+1) . "-" . (index($plastome, $irb)+length($irb));
+# The four regions. PlastomeRegions finds the inverted repeat wherever it lies in the record and
+# whether or not its copies are identical; what stood here assumed a record that ends on the last
+# base of IRa with two identical copies, and wrote "IRB 1-1" for any other (see PlastomeRegions.pm).
+# Without an inverted repeat only the FULL row is written.
+my $regions = PlastomeRegions::find($plastome);
+if (!$regions) { warn "$ARGV[9]: no inverted repeat of $PlastomeRegions::MIN_IR nt or more found; LSC/IRB/SSC/IRA rows are not written\n" }
+elsif (length $regions->{note}) { warn "$ARGV[9]: regions: $regions->{note}\n" }
 my $full_range = 1 . "-" . length($plastome);
 
 
@@ -1934,13 +1898,8 @@ for my $start (sort {$a <=> $b} keys %final_annotation){
 		}
 	}
 }
-$lsc_range =~ /(\d+)-(\d+)/;
-print $outfile2 "LSC\t$1\t$2\t+\n";
-$irb_range =~ /(\d+)-(\d+)/;
-print $outfile2 "IRB\t$1\t$2\t+\n";
-$ssc_range =~ /(\d+)-(\d+)/;
-print $outfile2 "SSC\t$1\t$2\t+\n";
-$ira_range =~ /(\d+)-(\d+)/;
-print $outfile2 "IRA\t$1\t$2\t+\n";
+# One row per region, or two with the same name when the region crosses the record's origin: the
+# piece that runs to the last base first, then the piece from base 1. Coordinates stay ascending.
+if ($regions) { for my $name (qw(LSC IRB SSC IRA)) { print $outfile2 "$name\t$_->[0]\t$_->[1]\t+\n" for @{ $regions->{$name} } } }
 $full_range =~ /(\d+)-(\d+)/;
 print $outfile2 "FULL\t$1\t$2\t+\n";

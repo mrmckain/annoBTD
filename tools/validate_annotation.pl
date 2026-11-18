@@ -145,8 +145,10 @@ sub guide_protein { my $g = shift; return @{ $gprot{$g} } if $gprot{$g}; for my 
 # ---- the annotation -----------------------------------------------------------------
 my (@rows, @ir, %region);
 open my $ah, "<", $ann or die "$ann: $!"; while (<$ah>) { chomp; next unless /\S/; my ($n, $s, $e, $d) = split /\t/; next unless defined $d && $s =~ /^\d+$/ && $e =~ /^\d+$/; ($s, $e) = ($e, $s) if $e < $s;
-    if ($n =~ /^(LSC|SSC|IRA|IRB)$/) { $region{$n} = [$s, $e]; next } next if $n =~ /~/ || $n eq 'FULL'; push @rows, [$n, $s, $e, $d] } close $ah;
-for my $r (qw(IRA IRB)) { push @ir, @{ $region{$r} } if $region{$r} }
+    if ($n =~ /^(LSC|SSC|IRA|IRB)$/) { push @{ $region{$n} }, [$s, $e]; next } next if $n =~ /~/ || $n eq 'FULL'; push @rows, [$n, $s, $e, $d] } close $ah;
+# IR boundaries. A copy that crosses the record's origin is two rows (x-L and 1-y); L and 1 are the origin, not boundaries.
+for my $r (qw(IRA IRB)) { my @p = @{ $region{$r} || [] }; my $wrap = @p == 2 && $p[1][0] == 1 && $p[0][1] == $len;
+    push @ir, $wrap ? ($p[0][0], $p[1][1]) : map { @$_ } @p }
 @ir = sort { $a <=> $b } @ir;
 sub near_ir { my ($s, $e, $pad) = @_; for my $b (@ir) { return $b if $b >= $s - $pad && $b <= $e + $pad } 0 }
 sub ambiguous { my ($s, $e) = @_; $s = 1 if $s < 1; $e = $len if $e > $len; my $x = substr($seq, $s - 1, $e - $s + 1); my $n = ($x =~ tr/ACGT//c); $n }

@@ -188,6 +188,13 @@ genomes annotated with and without their own record now differ in none of ~1,280
   ends follow the guides' majority. Intron rows are rebuilt from the exons.
 - **IR-boundary remnants.** The partial second copy of a gene that crosses an IR boundary
   (ycf1, ~1.2 kb) is not called, as in the curated genomes.
+- **Region rows.** `LSC`, `IRB`, `SSC` and `IRA` come from the sequence itself
+  (`pipeline/PlastomeRegions.pm`): the inverted repeat is found wherever it lies in the record,
+  whether or not its two copies are identical, and the record need not begin with the LSC. The
+  LSC is the longer single-copy region and IRb the copy that follows it. A region that crosses
+  the record's origin is written as two rows with the same name (the piece that runs to the last
+  base, then the piece from base 1). A plastome with no inverted repeat of 400 nt or more
+  (`ANNOBTD_MIN_IR`) gets the `FULL` row only.
 - **Frameshifts at homopolymer runs.** When a gene's reading frame shifts at a run of 7 or
   more identical bases (cemA in the Liliaceae, 9 to 25 A right after the ATG; ndhG in the
   North American *Lilium*, 18 to 21 A inside the gene), the gene is called whole, from its
@@ -244,7 +251,7 @@ applies hand edits (rename, move, add, delete) and rebuilds the spacer rows.
 |---|---|
 | `annobtd.sh` | annotate one genome (the entry point) |
 | `fetch_refdb.sh` | download or build the reference database bundle |
-| `pipeline/` | the annotation pipeline: `run_annotation_pipeline.sh` drives `annotate_plastome.pl` (ORFs), `run_multiblast.sh`, `identify_best_ref_for_orf_withscoring_v0.7.pl`, `match_orfs_to_blast_v2.2.pl` (boundaries) and `post_filter_annotation.pl`; `check_annotation.pl` and `check_splice.pl` are its sanity reports |
+| `pipeline/` | the annotation pipeline: `run_annotation_pipeline.sh` drives `annotate_plastome.pl` (ORFs), `run_multiblast.sh`, `identify_best_ref_for_orf_withscoring_v0.7.pl`, `match_orfs_to_blast_v2.2.pl` (boundaries; `PlastomeRegions.pm` for the LSC/IR/SSC rows) and `post_filter_annotation.pl`; `check_annotation.pl` and `check_splice.pl` are its sanity reports |
 | `guides/` | choosing guides: `choose_guides.sh` (filters and the hybrid rule), `select_guides.pl` (sketch ranking), `score_guide_consistency.pl`, `fetch_guides.sh` |
 | `refdb_build/` | building the reference database from GenBank: the taxonomy table, the flat-file mine, sketches, record metadata, species consensus, the profile, the taxonomy check, lineage assignment, the tRNA library and truth recuration |
 | `tables/` | curated tables the annotator reads: the tRNA sequence library and boundary conventions, gene synonyms, plastid tRNA identities |
