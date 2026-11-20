@@ -1,6 +1,8 @@
 #!/usr/bin/env perl
 # check_homopolymers.pl: count each homopolymer run that annoBTD reported in
-# the sequencing reads, and say whether the reads back the assembly.
+# the sequencing reads, and say whether the reads back the assembly. The report
+# lists the runs where a gene's reading frame shifts and every run of 10 or more
+# identical bases inside a gene that is in frame as assembled.
 #
 #   check_homopolymers.pl <assembly.fasta> <prefix>_homopolymers.tsv \
 #        --reads R1.fastq.gz [R2.fastq.gz ...] [--out FILE] [--fix FASTA]
@@ -13,7 +15,8 @@
 #   confirmed       the assembly's length is the commonest in the reads, by
 #                   at least 1.5 times the next length
 #   reads differ    another length is at least 1.5 times as common as the
-#                   assembly's; that length is suggested
+#                   assembly's; that length is suggested, whether or not it
+#                   keeps the gene in frame (the note says which)
 #   unresolved      two or more lengths are about equally common. If one of
 #                   them keeps the gene in frame it is suggested, because an
 #                   intact gene is the better guess when the reads cannot
@@ -53,12 +56,13 @@ close $F;
 sub rc { my $s = reverse $_[0]; $s =~ tr/ACGT/TGCA/; $s }
 
 # The report's runs, each widened to the whole run in the assembly.
-my @S;
+my @S; my $fcol;
 open my $R, '<', $report or die "$report: $!\n";
 while (<$R>) {
     s/\r?\n\z//;
     my @c = split /\t/;
-    next if !@c || $c[0] eq 'gene' || @c < 9;
+    if (@c && $c[0] eq 'gene') { ($fcol) = grep { $c[$_] eq 'gene_frame' } 0 .. $#c; next }
+    next if !@c || @c < 9;
     my ($s, $e) = @c[4, 5];
     my $b = substr($g, $s - 1, 1);
     $s-- while $s > 1 && substr($g, $s - 2, 1) eq $b;
@@ -68,13 +72,16 @@ while (<$R>) {
     my $Rf = substr($g, $e, $flank);
     my ($rL, $rR, $rb) = (rc($Rf), rc($L), rc($b));
     push @S, { gene => $c[0], s => $s, e => $e, b => $b, rb => $rb, len => $e - $s + 1,
-               inframe => { map { $_ => 1 } $c[8] =~ /(\d+)/g }, inframe_text => $c[8],
+               inframe => { map { $_ => 1 } $c[8] =~ /(\d+)/g }, inframe_text => $c[8], lf => $L, rlf => $rL,
+               frame => (defined $fcol && defined $c[$fcol] && length $c[$fcol] ? $c[$fcol] : 'shifted at this run'),
                f => qr/$L([ACGTN]{1,$maxrun}?)$Rf/, r => qr/$rL([ACGTN]{1,$maxrun}?)$rR/,
                n => {}, other => 0 };
 }
 close $R;
 
 my $nreads = 0;
+# one pass decides whether a read can cross any run at all: the left flank of some run, on either strand
+my $any; if (@S) { my $alt = join '|', map { ($_->{lf}, $_->{rlf}) } @S; $any = qr/$alt/ }
 if (@S) {
     for my $file (@reads) {
         my $fh;
@@ -84,6 +91,7 @@ if (@S) {
             my $seq = <$fh>; my $plus = <$fh>; my $qual = <$fh>;
             last unless defined $qual;
             $nreads++;
+            next unless $seq =~ $any;
             for my $x (@S) {
                 if ($seq =~ $x->{f}) {
                     my $m = $1;
@@ -102,7 +110,7 @@ if (@S) {
 my $O;
 if ($out) { open $O, '>', $out or die "$out: $!\n" } else { $O = \*STDOUT }
 print $O join("\t", qw(gene run_start run_end base_forward_strand assembly_length in_frame_if_run_were
-                       reads_crossing reads_with_another_base lengths_in_reads verdict suggested_length note)), "\n";
+                       reads_crossing reads_with_another_base lengths_in_reads verdict suggested_length note gene_frame)), "\n";
 my @edits;
 for my $x (@S) {
     my %n = %{ $x->{n} };
@@ -126,8 +134,9 @@ for my $x (@S) {
         elsif (@close == 1) {
             $verdict = 'reads differ';
             $suggest = $close[0];
-            $note = sprintf('%d of %d reads (%.0f%%) show %d; %d show the assembly\'s %d',
-                            $top, $tot, 100 * $top / $tot, $close[0], $asm, $x->{len});
+            $note = sprintf('%d of %d reads (%.0f%%) show %d; %d show the assembly\'s %d; %d %s',
+                            $top, $tot, 100 * $top / $tot, $close[0], $asm, $x->{len}, $close[0],
+                            $x->{inframe}{ $close[0] } ? 'keeps the gene in frame' : 'puts the gene out of frame');
         }
         else {
             $verdict = 'unresolved';
@@ -143,7 +152,7 @@ for my $x (@S) {
     $suggest = '' if $suggest ne '' && $suggest == $x->{len};
     push @edits, [$x->{s}, $x->{e}, $x->{b}, $suggest] if $suggest ne '';
     print $O join("\t", $x->{gene}, $x->{s}, $x->{e}, $x->{b}, $x->{len}, $x->{inframe_text},
-                  $tot, $x->{other}, $dist, $verdict, $suggest, $note), "\n";
+                  $tot, $x->{other}, $dist, $verdict, $suggest, $note, $x->{frame}), "\n";
 }
 close $O if $out;
 

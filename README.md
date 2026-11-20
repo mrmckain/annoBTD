@@ -135,7 +135,7 @@ Output, in `Mygenus_species_annobtd/`:
 | `<prefix>_annotation.txt` | `gene  start  end  strand`, 1-based inclusive; exons as `gene_exonN`, introns as `gene_intronN`, spacers as `geneA~geneB`, plus `LSC`, `SSC`, `IRA`, `IRB`, `FULL` region rows |
 | `<prefix>_guides.tsv` | the guides used, their similarity, and why each passed or was backfilled |
 | `<prefix>_post_filter.txt` | every decision the post filter took, one line each |
-| `<prefix>_homopolymers.tsv` | genes whose reading frame shifts at a homopolymer run: the run's position, its length and the lengths that would restore the frame |
+| `<prefix>_homopolymers.tsv` | homopolymer runs worth counting in the reads: those where a gene's reading frame shifts, and every run of 10 or more identical bases inside a gene that is in frame as assembled (column `gene_frame` says which); the run's position, its length and the lengths at which the gene is in frame |
 | `<prefix>_homopolymer_reads.tsv` | with `--reads`: each of those runs counted in the reads, with a verdict |
 | `<prefix>_corrected.fasta`, `<prefix>_corrected/` | with `--reads`, when the reads call for another run length: the sequence with it applied, and that sequence's annotation |
 | `<prefix>_checks/` | protein sanity (`check_annotation.tsv`) and splice-site (`check_splice.tsv`) reports |
@@ -210,6 +210,25 @@ genomes annotated with and without their own record now differ in none of ~1,280
   a frameshift is thought to be corrected by slippage. Older calls of such a gene (an
   internal ATG, an upstream TTG/ATA/AAT, a row named `<gene>_pseudogene`) come out
   `ARTIFACT` with the move or rename as the fix.
+- **Long runs in genes that are in frame.** A gene can be in frame only because its run
+  happens to have the right length: among 73 *Lilium* GenBank plastomes cemA's run of A is
+  9 to 19 long, in frame in 47 and out of frame in 26. Reads and assemblers miscount long
+  runs by one, so every run of 10 or more identical bases inside a protein-coding gene is
+  listed in `<prefix>_homopolymers.tsv` with `gene_frame` = `in frame`, and the validator
+  adds it to the row's flags whatever the verdict (`PASS` with `run of 12 A at
+  58480-58491`). It is a note, not a problem: it marks where to look in the reads. The
+  length is set with `ANNOBTD_MIN_RUN` (and `--min-run` for the validator).
+- **ycf1.** The two ends of ycf1 differ between plastomes, and GenBank records start it on
+  TTG, at an internal methionine, or keep only a fragment. annoBTD calls it from the
+  sequence and from what the protein looks like: the open reading frame that carries the
+  ycf1 protein, always from an ATG, to the stop of that frame. The ATG is the one the
+  curated references of other orders start the protein at (MI.KSF...) when it is in that
+  frame; otherwise the ATG nearest where the guides' ycf1 proteins, aligned to the frame, put
+  the protein's first residue, without adding sequence upstream of the homology just because
+  the frame stays open. ycf1 is not read through a frameshift: when the frame shifts, the gene is the
+  longer of the two open frames, and if the shift is at a homopolymer run the run is listed
+  in `<prefix>_homopolymers.tsv` (`gene_frame` = `shifted at this run; ycf1 is not read
+  through`) so it can be counted in the reads.
 - **Counting the runs in the reads.** A long run is where an assembly is most likely to be
   off by a base, so check each reported run against the reads:
 
@@ -227,7 +246,8 @@ genomes annotated with and without their own record now differ in none of ~1,280
   `<prefix>_homopolymer_reads.tsv` has one row per run: how many reads cross it, the run
   lengths they show, and a verdict. `confirmed`: the assembly's length is the commonest in
   the reads by at least 1.5 times the next. `reads differ`: another length is; it is
-  suggested. `unresolved`: two or more lengths are about equally common; if one of them keeps
+  suggested, whether it puts the gene in frame or out of it (the note says which; a gene
+  put out of frame is then a `FRAMESHIFT` gene, still called whole). `unresolved`: two or more lengths are about equally common; if one of them keeps
   the gene in frame it is suggested, since an intact gene is the better guess when the reads
   cannot decide. `too few reads`: fewer than 10 reads cross the run. When a length is
   suggested, `annobtd.sh --reads` writes `<prefix>_corrected.fasta` with it applied and

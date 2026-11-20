@@ -25,6 +25,12 @@
 #   UNRESOLVED  ambiguity codes in the span, an IR boundary inside the gene, or a
 #               spliced gene whose exons cannot be placed; look at the assembly
 #
+# Whatever its verdict, a protein-coding row's flags list each run of --min-run (10)
+# or more identical bases inside it ("run of 12 A at 58541-58552"). A gene that is
+# in frame with such a run is in frame only if the run was counted right: reads and
+# assemblers miscount long runs by one, and one base shifts the frame. Count it in
+# the reads (annobtd.sh --reads).
+#
 # Canonical genes the guides carry but the annotation lacks are tested the same
 # way. With --val, table2asn's validator messages are attached to the rows they
 # concern, so GenBank's view and ours sit side by side.
@@ -228,10 +234,17 @@ sub val_for { my ($s, $e) = @_; join('; ', map { "$_->{lev} $_->{code}: $_->{msg
 # ---- verdicts -----------------------------------------------------------------------
 print $out join("\t", qw(feature start end strand status flags evidence edit table2asn)), "\n";
 my %count;
-sub emit { my ($name, $s, $e, $d, $st, $flags, $ev, $edit) = @_; $count{$st}++; (my $ed = $edit // '') =~ s/\t/ /g; print $out join("\t", $name, $s, $e, $d, $st, $flags, $ev, $ed, val_for($s, $e)), "\n" }   # edits are space-separated inside the cell; turn spaces into tabs for verdant_edit.pl
+# the homopolymer runs of the feature being judged (set per protein-coding feature; the run a FRAMESHIFT flag already names is left out)
+our @RUNS; my $MINRUN = $o{'min-run'} // 10; $MINRUN = 7 if $MINRUN < 7;
+sub runs_of { my ($d, @ex) = @_; my @r; for my $x (@ex) { my $t = substr($seq, $x->[0] - 1, $x->[1] - $x->[0] + 1);
+        while ($t =~ /(A{$MINRUN,}|C{$MINRUN,}|G{$MINRUN,}|T{$MINRUN,})/g) { my ($rs, $re, $b) = ($x->[0] + $-[0], $x->[0] + $+[0] - 1, substr($1, 0, 1));
+            $rs-- while $rs > 1 && substr($seq, $rs - 2, 1) eq $b; $re++ while $re < $len && substr($seq, $re, 1) eq $b; $b =~ tr/ACGT/TGCA/ if $d eq '-';
+            push @r, [$rs, $re, $b] } } @r }
+sub emit { my ($name, $s, $e, $d, $st, $flags, $ev, $edit) = @_; $count{$st}++; { my @rf = map { sprintf("run of %d %s at %d-%d", $_->[1] - $_->[0] + 1, $_->[2], $_->[0], $_->[1]) } grep { index($flags // '', "at $_->[0]-$_->[1]") < 0 } @RUNS; $flags = join('; ', grep { defined && length } $flags, @rf) if @rf } (my $ed = $edit // '') =~ s/\t/ /g; print $out join("\t", $name, $s, $e, $d, $st, $flags, $ev, $ed, val_for($s, $e)), "\n" }   # edits are space-separated inside the cell; turn spaces into tabs for verdant_edit.pl
 sub rowname { my $f = shift; my @ex = @{ $f->{ex} }; @ex > 1 ? "$f->{gene} (" . scalar(@ex) . " exons)" : $f->{gene} }
 
 for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d}); my @ex = sort { $a->[0] <=> $b->[0] } @{ $f->{ex} }; my ($s, $e) = ($ex[0][0], $ex[-1][1]);
+    @RUNS = ($f->{rna} || $f->{pseudo} || $g =~ /^(trn|rrn)/) ? () : runs_of($d, @ex);
     if ($f->{pseudo}) {   # named a pseudogene only for a frameshift at a homopolymer run: such a gene keeps its name
         if (@ex == 1) { if (my @site = ConservedStart::homopolymer_site(spliced($d, [$s, $e]))) { my ($rs, $re) = $d eq '+' ? ($s + $site[0], $s + $site[0] + $site[1] - 1) : ($e - $site[0] - $site[1] + 1, $e - $site[0]);
                 (my $base = $g) =~ s/_pseudogene$//;
@@ -293,6 +306,7 @@ for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d});
             my ($xs, $xe) = $d eq '+' ? ($fs - $up, $fe) : ($fs, $fe + $up); my $k0 = $up / 3; my $x = spliced($d, [$xs, $xe]);
             my $an = ConservedStart::anchors($NTREFS->{$g}, $x, $k0 + $maxdown + 33); my $cur = substr($x, 3 * $k0, 3);
             my $c = !init_ok($cur, $g) ? ConservedStart::near_start($an, $x, $k0, $EDITABLE{$g}, $whole) : undef; $c //= ConservedStart::trim($an, $x, $k0, $maxdown, $EDITABLE{$g}, $whole);
+            $c = undef if $c && $g eq 'ycf1' && $c->{codon} ne 'ATG';   # ycf1 starts on ATG only (post filter section 5c)
             if ($c) {
                 my ($ns, $ne) = $d eq '+' ? ($xs + 3 * $c->{pos}, $fe) : ($fs, $xe - 3 * $c->{pos});
                 emit(rowname($f), $s, $e, $d, 'ARTIFACT', join('; ', @fl, "start not at the conserved N-terminus"), ($c->{pos} > $k0 + 5 ? "no order of the curated references starts the protein at the call's start" : "the call begins $cur beside the conserved start") . "; $c->{orders} start it " . ($c->{pos} - $k0) . " codons " . ($c->{pos} >= $k0 ? "downstream" : "upstream") . ", at the $c->{codon} at " . ($d eq '+' ? $ns : $ne), "move\t$first->[2]\t$fs\t$fe\t$ns\t$ne"); next } } }
@@ -300,7 +314,8 @@ for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d});
     if (!$ii->{mod3} && $NTREFS && $NTREFS->{$g} && @ex == 1) { my @gl = ($gd{$g} ? map { $_->{len} } values %{ $gd{$g} } : ()); my ($glong) = sort { $b <=> $a } (($E // 0), profile_lengths($g), @gl);
         if ($glong && $glong > $L + 30) { my $avail = $d eq '+' ? $s - 1 : $len - $e; my $up = $glong - $L + 90; $up = 6000 if $up > 6000; $up = $avail if $up > $avail; $up -= $up % 3;
             if ($up >= 33) { my ($xs, $xe) = $d eq '+' ? ($s - $up, $e) : ($s, $e + $up); my $x = spliced($d, [$xs, $xe]); my $k0 = $up / 3;
-                if (my $c = ConservedStart::extend(ConservedStart::anchors($NTREFS->{$g}, $x, $k0 + 40), $x, $k0, $EDITABLE{$g})) { my ($ns, $ne) = $d eq '+' ? ($xs + 3 * $c->{pos}, $e) : ($s, $xe - 3 * $c->{pos});
+                my $c = ConservedStart::extend(ConservedStart::anchors($NTREFS->{$g}, $x, $k0 + 40), $x, $k0, $EDITABLE{$g}); $c = undef if $c && $g eq 'ycf1' && $c->{codon} ne 'ATG';   # ycf1 starts on ATG only
+                if ($c) { my ($ns, $ne) = $d eq '+' ? ($xs + 3 * $c->{pos}, $e) : ($s, $xe - 3 * $c->{pos});
                     emit(rowname($f), $s, $e, $d, 'ARTIFACT', join('; ', @fl, "start inside the protein"), "no order of the curated references starts the protein near the call's start; $c->{orders} start it " . ($k0 - $c->{pos}) . " codons upstream, at the $c->{codon} at " . ($d eq '+' ? $ns : $ne) . ": " . ($ne - $ns + 1) . " nt", "move\t$ex[0][2]\t$s\t$e\t$ns\t$ne"); next } } } }
     # a start the guides carry further upstream (post_filter_annotation.pl section 4c): most guides' N-termini align
     # more than 10 codons upstream of the call, and an in-frame ATG sits within 10 codons of where they align
@@ -397,6 +412,7 @@ for my $key (@order) { my $f = $feat{$key}; my ($g, $d) = ($f->{gene}, $f->{d});
     if ($ii->{intact}) { emit(rowname($f), $s, $e, $d, 'PASS', $flags, "$evb; the spliced CDS is intact; the deviation is the gene's own"); next }
     emit(rowname($f), $s, $e, $d, 'REAL', $flags, "$evb; no boundary shift within 3 nt makes the spliced CDS intact", "rename\t$ex[0][2]\t$ex[0][0]\t$ex[0][1]\t${g}_pseudogene") }
 
+@RUNS = ();
 # ---- canonical genes the guides carry but the annotation lacks ------------------------
 for my $g (sort keys %gd) { next if $present{$g} || !$CANON{$g} || $g =~ /^rps12/; my $nc = carriers($g); next unless $nguides && $nc >= $nguides / 2;
     my ($h, $plen, $gname, $glen) = hsps($g); my $want = (expect($g))[0] // $glen;

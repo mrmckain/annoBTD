@@ -17,9 +17,11 @@
 #   -n                guides per genome (default 8)
 #   --exclude         accessions never used as guides (e.g. the genome's own record)
 #   --reads           the reads the plastome was assembled from (FASTQ, gzipped or not; two files
-#                     separated by a comma). Every homopolymer run that shifts a gene's reading
-#                     frame is counted in them (tools/check_homopolymers.pl). Where the reads call
-#                     for another run length, the corrected sequence is written and annotated too
+#                     separated by a comma). Every homopolymer run in <prefix>_homopolymers.tsv
+#                     (a run that shifts a gene's reading frame, or a run of 10 or more inside a
+#                     gene that is in frame) is counted in them (tools/check_homopolymers.pl). Where
+#                     the reads call for another run length, the corrected sequence is written and
+#                     annotated too
 #   --outdir          default ./<prefix>_annobtd
 #   --refdb           reference database directory (default ANNOBTD_REFDB, else refdb/
 #                     beside this script; see fetch_refdb.sh)
@@ -33,8 +35,10 @@
 #   <prefix>_guides.tsv       the guides used and why each was chosen
 #   <prefix>_post_filter.txt  every post-annotation decision (duplicates, names,
 #                             strands, junctions, starts)
-#   <prefix>_homopolymers.tsv genes whose reading frame shifts at a homopolymer run (kept as functional
-#                             genes under their own names): the run's position and length
+#   <prefix>_homopolymers.tsv homopolymer runs worth counting in the reads: those where a gene's reading
+#                             frame shifts (the gene is kept as functional under its own name) and every
+#                             run of 10 or more identical bases inside a gene that is in frame as assembled
+#                             (column gene_frame says which)
 #   <prefix>_homopolymer_reads.tsv   with --reads: each of those runs counted in the reads, with a verdict
 #   <prefix>_corrected.fasta, <prefix>_corrected/   with --reads, when the reads call for another run
 #                             length: the sequence with it applied and that sequence's annotation.
@@ -132,7 +136,7 @@ if [ -n "$READS" ]; then
         if [ -n "$NOCORRECT" ]; then perl "$ANNOBTD_DIR/tools/check_homopolymers.pl" "$FASTA" "$HP" --reads "$@" --out "$HR"
         else perl "$ANNOBTD_DIR/tools/check_homopolymers.pl" "$FASTA" "$HP" --reads "$@" --out "$HR" --fix "$CF"; fi \
             || { echo "annobtd.sh: the read check failed" >&2; exit 4; }
-        awk -F'\t' 'NR > 1 { printf "  %s: run of %s %s at %s-%s, %s%s (%s)\n", $1, $5, $4, $2, $3, $10, ($11 != "" ? ", " $11 " suggested" : ""), $12 }' "$HR" >&2
+        awk -F'\t' 'NR > 1 { printf "  %s: run of %s %s at %s-%s (gene %s), %s%s (%s)\n", $1, $5, $4, $2, $3, ($13 != "" ? $13 : "shifted at this run"), $10, ($11 != "" ? ", " $11 " suggested" : ""), $12 }' "$HR" >&2
         echo "read check -> $HR" >&2
         NFIX=$(awk -F'\t' 'NR > 1 && $11 != ""' "$HR" | wc -l | tr -d ' ')
         if [ -z "$NOCORRECT" ] && [ "$NFIX" -gt 0 ]; then
@@ -142,6 +146,6 @@ if [ -n "$READS" ]; then
             echo "annobtd.sh: USE THE CORRECTED SEQUENCE from here on: $CF, annotated in $OUTDIR/${PREFIX}_corrected/" >&2
         else rm -f "$CF"; fi
     else
-        echo "no gene's reading frame shifts at a homopolymer run; the reads were not needed" >&2
+        echo "no homopolymer run shifts a gene's reading frame and none of 10 or more lies inside a gene; the reads were not needed" >&2
     fi
 fi

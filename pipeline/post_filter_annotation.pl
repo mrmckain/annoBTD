@@ -608,7 +608,7 @@ my %consj;
 # within 3 codons, an ATG lies out of frame within 6 nt of that point, a run of >= 7
 # identical bases starts within 45 nt after it, and the whole span is within 9 nt of
 # a length a guide copy carries.
-my %hpshift; my %EDITED = map { $_ => 1 } qw(ndhD psbL rpl2 psbC);
+my %hpshift; my %ycf1orf; my %ycf1done; my %EDITED = map { $_ => 1 } qw(ndhD psbL rpl2 psbC);
 # A gene whose frame shifts at a homopolymer run is kept as a functional gene and reported (--homopolymers FILE): the
 # row keeps the gene's name and runs from its start codon to its stop, in frame before the run and in frame after it,
 # and the report gives the run's position so its length can be counted in the reads (tools/check_homopolymers.pl).
@@ -618,7 +618,7 @@ my %hpshift; my %EDITED = map { $_ => 1 } qw(ndhD psbL rpl2 psbC);
 my @hpreport;
 sub hp_report { my ($gene, $s, $e, $d, $site, $how) = @_; my ($off, $l, $b, $ok) = @$site; my ($rs, $re) = $d eq '+' ? ($s + $off, $s + $off + $l - 1) : ($e - $off - $l + 1, $e - $off);
     (my $fb = $b) =~ tr/ACGT/TGCA/; $fb = $b if $d eq '+';
-    push @hpreport, [$gene, $s, $e, $d, $rs, $re, $l, $fb, $ok, $how]; return ($rs, $re) }
+    push @hpreport, [$gene, $s, $e, $d, $rs, $re, $l, $fb, $ok, $how, 'shifted at this run', "the reading frame shifts at this run; the gene is in frame before it and after it and is kept as a functional gene. Count the run in the reads (annobtd.sh --reads, or tools/check_homopolymers.pl)"]; return ($rs, $re) }
 my %gseq_pf; sub guide_seq_pf { my $g = shift; return $gseq_pf{$g} if defined $gseq_pf{$g}; my $x = '';
     if ($o{'guide-seqs'} && open my $fh, "<", "$o{'guide-seqs'}/$g") { while (<$fh>) { next if /^>/; s/\s//g; $x .= uc } close $fh } $gseq_pf{$g} = $x }
 # the guides' copies of gene n: start codons, lengths, and the N-terminal 30 aa of those that begin ATG/GTG
@@ -649,6 +649,7 @@ sub hp_shift { my ($s, $e, $d, $peps, $glens, $acg) = @_; return () if ($e - $s 
     return ($ns, $ne, $NL, length $run, substr($run, 0, 1), scalar @anch) }
 if ($o{'guide-seqs'} && -d $o{'guide-seqs'} && %gcds && $seq) {
     for my $i (@feat) { next if $drop{$i}; my $r = $rows[$i]; my $n = $r->[0]; next if $n =~ /^(trn|rrn|rps12)/ || $n =~ /_intron|_exon|_pseudogene/ || !$gcds{$n};
+        next if $n eq 'ycf1';   # ycf1 is never read through a frameshift: it is its longest open reading frame (section 5c)
         my ($gstart, $glen, $gpep, $ncarry) = guide_starts($n); next unless $ncarry && 2 * @$gpep >= $ncarry;
         my @h = hp_shift(@$r[1 .. 3], $gpep, [keys %$glen], $EDITED{$n}) or next; my ($ns, $ne, $NL, $rl, $rb, $na) = @h;
         my $L = $r->[2] - $r->[1] + 1; my $cur = substr(cds_seq(@$r[1 .. 3]), 0, 3);
@@ -847,15 +848,75 @@ if ($o{'guide-seqs'} && -d $o{'guide-seqs'} && %gcds && $seq && !$o{'no-rescue'}
             else { my $want = $A->[0] - 3 * ($A->[5] - 1); my @cand; my $p = $A->[0]; push @cand, $p if substr($win, $p - 1, 3) eq 'ATG';
                 while ($p > 3 && $p > $A->[0] - 600) { $p -= 3; my $c = substr($win, $p - 1, 3); last if ($CODON{$c} // '') eq '*'; push @cand, $p if $c eq 'ATG' } ($st) = sort { abs($a - $want) <=> abs($b - $want) } @cand }
             next unless defined $st; my $en; { my $p = $B->[1]; while ($p + 3 <= length $win) { my $c = substr($win, $p, 3); $p += 3; if (($CODON{$c} // '') eq '*') { $en = $p; last } } } next unless defined $en;
+            # ycf1 is not read through: its two ends vary so much between plastomes that a frameshift near one of them is
+            # no evidence the rest is read. The gene is the longer of the two open frames, the first from its start to the
+            # stop its own frame reaches, the second from the ATG at or nearest upstream of where the protein begins to align in it, to its stop.
+            if ($n eq 'ycf1') {
+                my $ea; { my $p = $st - 1; while ($p + 3 <= length $win) { my $c = substr($win, $p, 3); $p += 3; if (($CODON{$c} // '') eq '*') { $ea = $p; last } } }
+                my $sb; { my $p = $B->[0]; while ($p >= 1) { my $c = substr($win, $p - 1, 3); last if ($CODON{$c} // '') eq '*'; if ($c eq 'ATG') { $sb = $p; last } $p -= 3 }   # the ATG at or nearest upstream of where the second frame's homology begins
+                    unless (defined $sb) { for ($p = $B->[0] + 3; $p < $B->[1]; $p += 3) { if (substr($win, $p - 1, 3) eq 'ATG') { $sb = $p; last } } } }
+                my ($LA, $LB) = (defined $ea ? $ea - $st + 1 : 0, defined $sb ? $en - $sb + 1 : 0); next unless $LA || $LB;
+                my ($ps, $pe) = $LA >= $LB ? ($st, $ea) : ($sb, $en);
+                my ($ns, $ne) = $d eq '+' ? ($ws + $ps - 1, $ws + $pe - 1) : ($we - $pe + 1, $we - $ps + 1);
+                my ($ts, $te) = $d eq '+' ? ($ws + $st - 1, $ws + $en - 1) : ($we - $en + 1, $we - $st + 1); my $at = '';
+                if (my @site = ConservedStart::homopolymer_site(substr($win, $st - 1, $en - $st + 1))) { my ($rs, $re) = hp_report($n, $ts, $te, $d, \@site, 'inside the gene');
+                    @{ $hpreport[-1] }[1, 2, 10, 11] = ($ns, $ne, 'shifted at this run; ycf1 is not read through', sprintf("ycf1 is called as its longest open reading frame (%d nt). The frame shifts at this run; with a run of %s the gene would be one open frame from %d to %d. Count the run in the reads (annobtd.sh --reads, or tools/check_homopolymers.pl)", $ne - $ns + 1, $site[3], $ts, $te));
+                    $at = sprintf(" at a run of %d %s at %d-%d (one frame if the run were %s)", $site[1], $site[2], $rs, $re, $site[3]) }
+                printf $log "YCF1_ORF\t%s %d-%d %s\t%d nt -> %d-%d, %d nt: the reading frame shifts%s; ycf1 is the longer of its two open frames (%d and %d nt) and is not read through\n", $n, $s, $e, $d, $L, $ns, $ne, $ne - $ns + 1, $at, $LA, $LB;
+                $ycf1done{$i} = 1; if ($ns != $s || $ne != $e) { ($r->[1], $r->[2]) = ($ns, $ne); $ycf1orf{$i} = 1 }
+                next }
             my $span = substr($win, $st - 1, $en - $st + 1); next unless $INIT{ substr($span, 0, 3) }; my $NL = length $span; next if abs($NL - $glen) > 0.1 * $glen;
             my @site = ConservedStart::homopolymer_site($span) or next; my $ro = $st + $site[0]; my ($jlo, $jhi) = sort { $a <=> $b } ($A->[1], $B->[0]); next unless $ro + $site[1] >= $jlo - 45 && $ro <= $jhi + 45;
             my ($ns, $ne) = $d eq '+' ? ($ws + $st - 1, $ws + $en - 1) : ($we - $en + 1, $we - $st + 1); my ($rs, $re) = hp_report($n, $ns, $ne, $d, \@site, 'inside the gene');
             printf $log "HOMOPOLYMER_FRAMESHIFT\t%s %d-%d %s\t%d nt -> %s %d-%d, %d nt: the protein continues in another frame after a run of %d %s at %d-%d (in frame if the run were %s); kept as a functional gene, count the run in the reads\n",
                 $n, $s, $e, $d, $L, $n, $ns, $ne, $NL, $site[1], $site[2], $rs, $re, $site[3];
             ($r->[1], $r->[2]) = ($ns, $ne); $hpshift{$i} = 1 } } }
-if ($o{homopolymers}) { open my $hf, ">", $o{homopolymers} or die "$o{homopolymers}: $!";
-    print $hf join("\t", qw(gene gene_start gene_end strand run_start run_end run_length base_forward_strand in_frame_if_run_were where note)), "\n";
-    print $hf join("\t", @$_[0 .. 9], "the reading frame shifts at this run; the gene is in frame before it and after it and is kept as a functional gene. Count the run in the reads (tools/check_homopolymers.pl)"), "\n" for sort { $a->[1] <=> $b->[1] } @hpreport; close $hf }
+
+# --- 5c. ycf1: the open reading frame that carries the protein, from an ATG ------------------
+# ycf1's ends differ between plastomes and between the records that annotate them (TTG starts, starts at an internal
+# methionine, a remnant kept as the gene), so the gene is defined by its sequence and by what the protein is known to
+# look like: the open reading frame the call lies in, begun at an ATG, covering all of it that is homologous to ycf1.
+# A start the curated references of two orders share (MI.KSF...) stands, and section 4e has already extended a call to
+# it. Otherwise the guides' ycf1 proteins are aligned to the frame (tblastn). Each alignment that begins within the
+# protein's first 30 residues says where the protein's first residue falls (its start in the frame minus the residues
+# before it), and the most upstream of those is the target; with no such alignment, where homology begins. The start is
+# the ATG of the open frame nearest the target (the upstream one on a tie), and an ATG start within 5 codons of the
+# target stands. Sequence upstream of the homology is not added just because the frame stays open, and ycf1 never
+# starts on TTG, ATA or another rare initiator.
+if ($seq) { my $tblastn = $o{'blast-bin'} ? "$o{'blast-bin'}/tblastn" : $ENV{BLAST_BIN} ? "$ENV{BLAST_BIN}/tblastn" : (grep { -x $_ } map { "$_/tblastn" } split /:/, ($ENV{PATH} // ''))[0]; my ($dir, @gp);
+  for my $i (@feat) { next if $drop{$i} || $ycf1done{$i}; my $r = $rows[$i]; next unless $r->[0] eq 'ycf1'; my ($s, $e, $d) = @$r[1 .. 3]; my $L = $e - $s + 1; next if $L % 3 || $L < 300;
+    my $avail = $d eq '+' ? $s - 1 : $len - $e; my $up = $avail - $avail % 3; $up = 9000 if $up > 9000;
+    my ($xs, $xe) = $d eq '+' ? ($s - $up, $e) : ($s, $e + $up); my $x = cds_seq($xs, $xe, $d); next unless $x; my $k0 = $up / 3;
+    my $body = translate(substr($x, 3 * $k0)); next unless index($body, '*') == length($body) - 1;   # one frame, start to stop
+    my $cur = substr($x, 3 * $k0, 3);
+    if ($cur eq 'ATG' && $NTREFS && $NTREFS->{ycf1}) { my $lo = $k0 > 15 ? $k0 - 15 : 0; my $an = ConservedStart::anchors($NTREFS->{ycf1}, substr($x, 3 * $lo), $k0 - $lo + 40);
+        my @o = ConservedStart::orders_in($an, $k0 - $lo - 3, $k0 - $lo + 3); next if @o >= 2 }
+    # the open stretch: from the codon after the nearest stop upstream (codon index $k1) to the call's stop
+    my $k1 = $k0; while ($k1 > 0) { my $c = substr($x, 3 * ($k1 - 1), 3); last if ($CODON{$c} // '') eq '*'; $k1-- }
+    # where the guides' ycf1 proteins begin to align in this frame, inside the open stretch
+    my $T;
+    if ($tblastn && -x $tblastn && $o{'guide-seqs'} && -d $o{'guide-seqs'} && $gcds{ycf1}) {
+        unless ($dir) { require File::Temp; $dir = File::Temp::tempdir(CLEANUP => 1);
+            for my $g (sort keys %{ $gcds{ycf1} }) { my $gs = guide_seq_pf($g); my ($a1, $a2, $gd) = @{ $gcds{ycf1}{$g} }; next if $a2 > length $gs; my $y = substr($gs, $a1 - 1, $a2 - $a1 + 1);
+                if ($gd eq '-') { $y = reverse $y; $y =~ tr/ACGT/TGCA/ } my $p = translate($y); $p =~ s/\*$//; next if $p =~ /\*/ || length($p) < 300; push @gp, $p } }
+        if (@gp && open my $qf, ">", "$dir/y.fa") { print $qf ">g$_\n$gp[$_]\n" for 0 .. $#gp; close $qf; (my $wn = $x) =~ tr/ACGT/N/c;
+            if (open my $sf, ">", "$dir/yw.fa") { print $sf ">w\n$wn\n"; close $sf;
+                my ($Tn, $Tr);   # from alignments that begin in the protein's first 30 residues; from any alignment
+                for (`$tblastn -query $dir/y.fa -subject $dir/yw.fa -seg no -evalue 1e-5 -outfmt '6 sstart send sframe pident length qstart' 2>/dev/null`) { chomp; my ($ss, $se, $fr, $pid, $al, $qs) = split /\t/;
+                    next unless $fr == 1 && $pid >= 50 && $al >= 20; my $k = int(($ss - 1) / 3); next if $k < $k1 || $se > length($x); $Tr = $k if !defined $Tr || $k < $Tr;
+                    if ($qs <= 30) { my $p = $k - ($qs - 1); $p = $k1 if $p < $k1; $Tn = $p if !defined $Tn || $p < $Tn } }
+                $T = $Tn // $Tr } } }
+    my $pick;
+    if (defined $T) { next if $cur eq 'ATG' && abs($k0 - $T) <= 5;
+        ($pick) = sort { abs($a - $T) <=> abs($b - $T) || $a <=> $b } grep { substr($x, 3 * $_, 3) eq 'ATG' } ($k1 .. $k0 + int($L / 3) - 30) }
+    elsif ($cur ne 'ATG') {   # no alignment to go by: the nearest ATG upstream in the open frame, else the next one downstream
+        for (my $k = $k0 - 1; $k >= $k1; $k--) { if (substr($x, 3 * $k, 3) eq 'ATG') { $pick = $k; last } }
+        unless (defined $pick) { for my $k ($k0 + 1 .. $k0 + int($L / 3) - 30) { if (substr($x, 3 * $k, 3) eq 'ATG') { $pick = $k; last } } } }
+    next unless defined $pick && $pick != $k0;
+    my ($ns, $ne) = $d eq '+' ? ($xs + 3 * $pick, $e) : ($s, $xe - 3 * $pick);
+    printf $log "YCF1_ORF\t%s %d-%d %s\t%s start, %d nt -> %d-%d, %d nt: ycf1 is the open reading frame that carries the protein, from the ATG %s\n", $r->[0], $s, $e, $d, $cur, $L, $ns, $ne, $ne - $ns + 1,
+        !defined $T ? 'nearest the call' : sprintf("nearest where the guides' ycf1 proteins put its first residue (%d codon%s %s)", abs($pick - $T), abs($pick - $T) == 1 ? '' : 's', $pick < $T ? 'upstream of it' : $pick > $T ? 'downstream of it' : 'from it');
+    ($r->[1], $r->[2]) = ($ns, $ne); $ycf1orf{$i} = 1 } }
 
 # --- 6. the remnant copy at an IR boundary ---------------------------------------------
 # A gene that crosses an IR boundary leaves a partial second copy in the other IR (ycf1 ~1.2 kb at JSA, rps19, ndhF).
@@ -872,6 +933,24 @@ if ($o{homopolymers}) { open my $hf, ">", $o{homopolymers} or die "$o{homopolyme
           next unless grep { $_ >= $rows[$i][1] - 150 && $_ <= $rows[$i][2] + 150 } @bnd;
           $drop{$i} = 1; printf $log "IR_REMNANT\tdrop %s %d-%d %s\t%d nt at an IR boundary; the whole gene (%d nt) is at %d-%d\n", @{ $rows[$i] }[0 .. 3], $L, $rows[$full][2] - $rows[$full][1] + 1, @{ $rows[$full] }[1, 2] } } }
 
+# --- 6b. the homopolymer report ----------------------------------------------------------
+# Besides the runs where a frame shifts, every run of --min-run (10) or more identical bases inside a protein-coding
+# row is listed, though the gene is in frame as assembled: sequencing reads and assemblers miscount runs this long by
+# one easily, and one base more or fewer shifts the frame (26 of 72 Lilium records carry cemA out of frame at its run of
+# A, the others in frame at 9, 12, 15 or 18). An in-frame gene with such a run is in frame only if the run was counted
+# right, so it is worth counting in the reads too.
+if ($o{homopolymers}) { my $MINRUN = $o{'min-run'} // 10; $MINRUN = 7 if $MINRUN < 7; my %have = map { $_->[4] => 1 } @hpreport;
+    if ($seq) { for my $i (@feat) { next if $drop{$i}; my $r = $rows[$i]; my $n = $r->[0]; next if $n =~ /^(trn|rrn)/ || $n =~ /_intron|_pseudog|~/; my ($s, $e, $d) = @$r[1 .. 3];
+        my $x = substr($seq, $s - 1, $e - $s + 1); my $first = ($n =~ /_exon(\d+)$/) ? $1 == 1 : 1;
+        while ($x =~ /(A{$MINRUN,}|C{$MINRUN,}|G{$MINRUN,}|T{$MINRUN,})/g) { my ($rs, $re, $b) = ($s + $-[0], $s + $+[0] - 1, substr($1, 0, 1));
+            $rs-- while $rs > 1 && substr($seq, $rs - 2, 1) eq $b; $re++ while $re < $len && substr($seq, $re, 1) eq $b; next if $have{$rs}++; my $l = $re - $rs + 1;
+            my $from = $d eq '+' ? $rs - $s : $e - $re; my $how = ($first && $from <= 60) ? 'beside the start codon' : 'inside the gene';
+            push @hpreport, [$n, $s, $e, $d, $rs, $re, $l, $b, ($l - 3) . ", $l or " . ($l + 3), $how, 'in frame',
+                "the gene is in frame with this run as assembled. A run this long is easily miscounted by one, which would shift the frame. Count the run in the reads (annobtd.sh --reads, or tools/check_homopolymers.pl)"] } } }
+    open my $hf, ">", $o{homopolymers} or die "$o{homopolymers}: $!";
+    print $hf join("\t", qw(gene gene_start gene_end strand run_start run_end run_length base_forward_strand in_frame_if_run_were where gene_frame note)), "\n";
+    print $hf join("\t", @$_[0 .. 11]), "\n" for sort { $a->[4] <=> $b->[4] } @hpreport; close $hf }
+
 # --- 7. intron rows from the exons -------------------------------------------------------
 # Intron rows were transferred with the guides' names and never followed an exon that moved or was renamed (a
 # trnG-GCC_intron1 between the exons of trnG-UCC; trnI-GAU's intron 5 nt short of its exon; none for trnK-UUU). They are
@@ -887,7 +966,7 @@ my $introns_changed = 0;
   if ($introns_changed) { for my $i (@feat) { $drop{$i} = 1 if !$drop{$i} && $rows[$i][0] =~ /_intron\d*$/ } for my $r (@new) { push @rows, $r; push @feat, $#rows } } }
 
 # --- rewrite, merging intergenic rows around removed features ------------------
-unless (%drop || %moved || %moved_strand || %renamed || %spliced || %extended || %rescued || %majority || %hpshift || %consv || %upstart || %refext || %consj || %exon_added || %rrn_moved || $introns_changed) { close $log if $o{log}; exit 0 }
+unless (%drop || %moved || %moved_strand || %renamed || %spliced || %extended || %rescued || %majority || %hpshift || %ycf1orf || %consv || %upstart || %refext || %consj || %exon_added || %rrn_moved || $introns_changed) { close $log if $o{log}; exit 0 }
 my @keep = grep { !$drop{$_} } @feat;
 my @out;
 # feature rows in file order, skipping dropped ones and all old intergenic rows

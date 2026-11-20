@@ -164,7 +164,7 @@ if [ -z "${ANNOBTD_SKIP_POSTFILTER:-}" ] && [ -s "$ANNOTATION" ]; then
         $( [ -z "${ANNOBTD_NO_ARAGORN:-}" ] && [ -n "$ARAGORN_BIN" ] && [ -x "$ARAGORN_BIN" ] && printf -- "--aragorn %s --trna-convention %s" "$ARAGORN_BIN" "${ANNOBTD_TRNA_CONVENTION:-$ANNOBTD_DIR/tables/trna_window_residuals.tsv}" ) \
         ${ANNOBTD_SPECIES_UNITS:+--species-units "$ANNOBTD_SPECIES_UNITS"} ${ANNOBTD_SPECIES_GENES:+--species-genes "$ANNOBTD_SPECIES_GENES"} --presence-mode "${ANNOBTD_PRESENCE_MODE:-family}" \
         $( [ -z "${ANNOBTD_NO_TRNA_LIBRARY:-}" ] && [ -s "${ANNOBTD_TRNA_LIBRARY:-$ANNOBTD_DIR/tables/trna_library.fasta}" ] && printf -- "--trna-library %s" "${ANNOBTD_TRNA_LIBRARY:-$ANNOBTD_DIR/tables/trna_library.fasta}" ) ${ANNOBTD_TRNA_LIBRARY_EXCLUDE:+--trna-library-exclude "$ANNOBTD_TRNA_LIBRARY_EXCLUDE"} ${BLAST_BIN:+--blast-bin "$BLAST_BIN"} \
-        --log "${SP}_post_filter.txt" --homopolymers "${SP}_homopolymers.tsv" || true
+        --log "${SP}_post_filter.txt" --homopolymers "${SP}_homopolymers.tsv" ${ANNOBTD_MIN_RUN:+--min-run "$ANNOBTD_MIN_RUN"} || true
 fi
 if [ -z "${ANNOBTD_SKIP_CHECKS:-}" ] && [ -s "$ANNOTATION" ]; then
     perl "$ANNOBTD_DIR/pipeline/check_annotation.pl" "$PLASTOME" "$ANNOTATION" \
